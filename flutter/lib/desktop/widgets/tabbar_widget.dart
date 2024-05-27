@@ -334,7 +334,7 @@ class DesktopTab extends StatelessWidget {
 
   List<Widget> _tabWidgets = [];
   Widget _buildPageView() {
-    return _buildBlock(
+    final child = _buildBlock(
         child: Obx(() => PageView(
             controller: state.value.pageController,
             physics: NeverScrollableScrollPhysics(),
@@ -358,6 +358,11 @@ class DesktopTab extends StatelessWidget {
                 return newList;
               }
             }())));
+    if (tabType == DesktopTabType.remoteScreen) {
+      return Container(color: kColorCanvas, child: child);
+    } else {
+      return child;
+    }
   }
 
   /// Check whether to show ListView
@@ -641,14 +646,12 @@ class WindowActionPanelState extends State<WindowActionPanel>
       }
       // macOS specific workaround, the window is not hiding when in fullscreen.
       if (isMacOS && await windowManager.isFullScreen()) {
-        stateGlobal.closeOnFullscreen ??= true;
         await windowManager.setFullScreen(false);
         await macOSWindowClose(
           () async => await windowManager.isFullScreen(),
           mainWindowClose,
         );
       } else {
-        stateGlobal.closeOnFullscreen ??= false;
         await mainWindowClose();
       }
     } else {
@@ -660,7 +663,6 @@ class WindowActionPanelState extends State<WindowActionPanel>
 
         if (await widget.onClose?.call() ?? true) {
           if (await controller.isFullScreen()) {
-            stateGlobal.closeOnFullscreen ??= true;
             await controller.setFullscreen(false);
             stateGlobal.setFullscreen(false, procWnd: false);
             await macOSWindowClose(
@@ -668,7 +670,6 @@ class WindowActionPanelState extends State<WindowActionPanel>
               () async => await notMainWindowClose(controller),
             );
           } else {
-            stateGlobal.closeOnFullscreen ??= false;
             await notMainWindowClose(controller);
           }
         }
