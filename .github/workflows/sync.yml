@@ -14,6 +14,7 @@ jobs:
           head: master
           auto_approve: true
           retries: 2
+          retry_after: 30
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -21,11 +22,5 @@ jobs:
         id: "tag_create"
         with:
           tag: "nightly"
+          force_push_tag: true
           tag_exists_error: false
-          message: "nightly"
-      - name: Tag already present (env)
-        run: |
-          echo "Tag already present: ${{ env.TAG_EXISTS }}"
-      - name: Tag already present (steps)
-        run: |
-          echo "Tag already present: ${{ steps.tag_create.outputs.tag_exists }}"
