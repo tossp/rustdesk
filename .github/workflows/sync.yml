@@ -10,5 +10,5 @@ jobs:
       - uses: tgymnich/fork-sync@v1.9.0
         with:
           owner: rustdesk
-          base: master
+          base: main
           head: master
