@@ -12,6 +12,8 @@ jobs:
           owner: rustdesk
           base: main
           head: master
+          auto_approve: true
+          retries: 2
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
