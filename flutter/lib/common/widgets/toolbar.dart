@@ -22,6 +22,20 @@ class TTextMenu {
       required this.onPressed,
       this.trailingIcon,
       this.divider = false});
+
+  Widget getChild() {
+    if (trailingIcon != null) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          child,
+          trailingIcon!,
+        ],
+      );
+    } else {
+      return child;
+    }
+  }
 }
 
 class TRadioMenu<T> {
@@ -115,7 +129,10 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
     );
   }
   // paste
-  if (isMobile && perms['keyboard'] != false && perms['clipboard'] != false) {
+  if (isMobile &&
+      pi.platform != kPeerPlatformAndroid &&
+      perms['keyboard'] != false &&
+      perms['clipboard'] != false) {
     v.add(TTextMenu(
         child: Text(translate('Paste')),
         onPressed: () async {
@@ -564,7 +581,7 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         child: Text(translate('Disable clipboard'))));
   }
   // lock after session end
-  if (ffiModel.keyboard) {
+  if (ffiModel.keyboard && !ffiModel.isPeerAndroid) {
     final enabled = !ffiModel.viewOnly;
     final option = 'lock-after-session-end';
     final value =
@@ -580,8 +597,7 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         child: Text(translate('Lock after session end'))));
   }
 
-  if (bind.mainGetUseTextureRender() &&
-      pi.isSupportMultiDisplay &&
+  if (pi.isSupportMultiDisplay &&
       PrivacyModeState.find(id).isEmpty &&
       pi.displaysCount.value > 1 &&
       bind.mainGetUserDefaultOption(key: kKeyShowMonitorsToolbar) == 'Y') {
@@ -593,15 +609,13 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         onChanged: (value) {
           if (value == null) return;
           bind.sessionSetDisplaysAsIndividualWindows(
-              sessionId: sessionId, value: value ? 'Y' : '');
+              sessionId: sessionId, value: value ? 'Y' : 'N');
         },
         child: Text(translate('Show displays as individual windows'))));
   }
 
   final isMultiScreens = !isWeb && (await getScreenRectList()).length > 1;
-  if (bind.mainGetUseTextureRender() &&
-      pi.isSupportMultiDisplay &&
-      isMultiScreens) {
+  if (pi.isSupportMultiDisplay && isMultiScreens) {
     final value = bind.sessionGetUseAllMyDisplaysForTheRemoteSession(
             sessionId: ffi.sessionId) ==
         'Y';
@@ -610,7 +624,7 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
         onChanged: (value) {
           if (value == null) return;
           bind.sessionSetUseAllMyDisplaysForTheRemoteSession(
-              sessionId: sessionId, value: value ? 'Y' : '');
+              sessionId: sessionId, value: value ? 'Y' : 'N');
         },
         child: Text(translate('Use all my displays for the remote session'))));
   }
@@ -636,6 +650,18 @@ Future<List<TToggleMenu>> toolbarDisplayToggle(
     v.addAll(toolbarKeyboardToggles(ffi));
   }
 
+  // view mode (mobile only, desktop is in keyboard menu)
+  if (isMobile && versionCmp(pi.version, '1.2.0') >= 0) {
+    v.add(TToggleMenu(
+        value: ffiModel.viewOnly,
+        onChanged: (value) async {
+          if (value == null) return;
+          await bind.sessionToggleOption(
+              sessionId: ffi.sessionId, value: kOptionToggleViewOnly);
+          ffiModel.setViewOnly(id, value);
+        },
+        child: Text(translate('View Mode'))));
+  }
   return v;
 }
 
