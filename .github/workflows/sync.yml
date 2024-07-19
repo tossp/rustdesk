@@ -11,15 +11,6 @@ jobs:
         with:
           owner: rustdesk
           token: ${{ secrets.PERSONAL_TOKEN }}
-          base: master
-          head: master
-          auto_approve: true
-          retries: 2
-          retry_after: 30
-      - uses: tgymnich/fork-sync@v2
-        with:
-          owner: rustdesk
-          token: ${{ secrets.PERSONAL_TOKEN }}
           base: main
           head: master
           auto_approve: true
