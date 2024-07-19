@@ -10,6 +10,7 @@ jobs:
       - uses: tgymnich/fork-sync@v2
         with:
           owner: rustdesk
+          token: ${{ secrets.PERSONAL_TOKEN }}
           base: main
           head: master
           auto_approve: true
