@@ -304,8 +304,13 @@ class FfiModel with ChangeNotifier {
       } else if (name == 'job_progress') {
         parent.target?.fileModel.jobController.tryUpdateJobProgress(evt);
       } else if (name == 'job_done') {
-        parent.target?.fileModel.jobController.jobDone(evt);
-        parent.target?.fileModel.refreshAll();
+        bool? refresh =
+            await parent.target?.fileModel.jobController.jobDone(evt);
+        if (refresh == true) {
+          // many job done for delete directory
+          // todo: refresh may not work when confirm delete local directory
+          parent.target?.fileModel.refreshAll();
+        }
       } else if (name == 'job_error') {
         parent.target?.fileModel.jobController.jobError(evt);
       } else if (name == 'override_file_confirm') {
@@ -384,7 +389,7 @@ class FfiModel with ChangeNotifier {
       } else if (name == 'use_texture_render') {
         _handleUseTextureRender(evt, sessionId, peerId);
       } else {
-        debugPrint('Unknown event name: $name');
+        debugPrint('Event is not handled in the fixed branch: $name');
       }
     };
   }
@@ -723,6 +728,8 @@ class FfiModel with ChangeNotifier {
 
   /// Handle the peer info event based on [evt].
   handlePeerInfo(Map<String, dynamic> evt, String peerId, bool isCache) async {
+    parent.target?.chatModel.voiceCallStatus.value = VoiceCallStatus.notStarted;
+
     // This call is to ensuer the keyboard mode is updated depending on the peer version.
     parent.target?.inputModel.updateKeyboardMode();
 
@@ -1001,14 +1008,15 @@ class FfiModel with ChangeNotifier {
             // Notify to switch display
             msgBox(sessionId, 'custom-nook-nocancel-hasclose-info', 'Prompt',
                 'display_is_plugged_out_msg', '', parent.target!.dialogManager);
-            final newDisplay = pi.primaryDisplay == kInvalidDisplayIndex
-                ? 0
-                : pi.primaryDisplay;
-            final displays = newDisplay;
+            final isPeerPrimaryDisplayValid =
+                pi.primaryDisplay == kInvalidDisplayIndex ||
+                    pi.primaryDisplay >= pi.displays.length;
+            final newDisplay =
+                isPeerPrimaryDisplayValid ? 0 : pi.primaryDisplay;
             bind.sessionSwitchDisplay(
               isDesktop: isDesktop,
               sessionId: sessionId,
-              value: Int32List.fromList([displays]),
+              value: Int32List.fromList([newDisplay]),
             );
 
             if (_pi.isSupportMultiUiSession) {
@@ -1173,26 +1181,28 @@ class ImageModel with ChangeNotifier {
 
   addCallbackOnFirstImage(Function(String) cb) => callbacksOnFirstImage.add(cb);
 
-  onRgba(int display, Uint8List rgba) {
+  clearImage() => _image = null;
+
+  onRgba(int display, Uint8List rgba) async {
+    try {
+      await decodeAndUpdate(display, rgba);
+    } catch (e) {
+      debugPrint('onRgba error: $e');
+    }
+    platformFFI.nextRgba(sessionId, display);
+  }
+
+  decodeAndUpdate(int display, Uint8List rgba) async {
     final pid = parent.target?.id;
     final rect = parent.target?.ffiModel.pi.getDisplayRect(display);
-    img.decodeImageFromPixels(
-        rgba,
-        rect?.width.toInt() ?? 0,
-        rect?.height.toInt() ?? 0,
-        isWeb ? ui.PixelFormat.rgba8888 : ui.PixelFormat.bgra8888,
-        onPixelsCopied: () {
-      // Unlock the rgba memory from rust codes.
-      platformFFI.nextRgba(sessionId, display);
-    }).then((image) {
-      if (parent.target?.id != pid) return;
-      try {
-        // my throw exception, because the listener maybe already dispose
-        update(image);
-      } catch (e) {
-        debugPrint('update image: $e');
-      }
-    });
+    final image = await img.decodeImageFromPixels(
+      rgba,
+      rect?.width.toInt() ?? 0,
+      rect?.height.toInt() ?? 0,
+      isWeb ? ui.PixelFormat.rgba8888 : ui.PixelFormat.bgra8888,
+    );
+    if (parent.target?.id != pid) return;
+    await update(image);
   }
 
   update(ui.Image? image) async {
@@ -2173,6 +2183,7 @@ class CursorModel with ChangeNotifier {
       debugPrint("deleting cursor with key $k");
       deleteCustomCursor(k);
     }
+    resetSystemCursor();
   }
 
   trySetRemoteWindowCoords() {
@@ -2547,32 +2558,30 @@ class FFI {
           }
         } else if (message is EventToUI_Rgba) {
           final display = message.field0;
-          if (imageModel.useTextureRender || ffiModel.pi.forceTextureRender) {
-            //debugPrint("EventToUI_Rgba display:$display");
-            textureModel.setTextureType(display: display, gpuTexture: false);
+          // Fetch the image buffer from rust codes.
+          final sz = platformFFI.getRgbaSize(sessionId, display);
+          if (sz == 0) {
+            platformFFI.nextRgba(sessionId, display);
+            return;
+          }
+          final rgba = platformFFI.getRgba(sessionId, display, sz);
+          if (rgba != null) {
             onEvent2UIRgba();
+            await imageModel.onRgba(display, rgba);
           } else {
-            // Fetch the image buffer from rust codes.
-            final sz = platformFFI.getRgbaSize(sessionId, display);
-            if (sz == 0) {
-              platformFFI.nextRgba(sessionId, display);
-              return;
-            }
-            final rgba = platformFFI.getRgba(sessionId, display, sz);
-            if (rgba != null) {
-              onEvent2UIRgba();
-              imageModel.onRgba(display, rgba);
-            } else {
-              platformFFI.nextRgba(sessionId, display);
-            }
+            platformFFI.nextRgba(sessionId, display);
           }
         } else if (message is EventToUI_Texture) {
           final display = message.field0;
-          debugPrint("EventToUI_Texture display:$display");
-          if (hasGpuTextureRender) {
-            textureModel.setTextureType(display: display, gpuTexture: true);
-            onEvent2UIRgba();
+          final gpuTexture = message.field1;
+          debugPrint(
+              "EventToUI_Texture display:$display, gpuTexture:$gpuTexture");
+          if (gpuTexture && !hasGpuTextureRender) {
+            debugPrint('the gpuTexture is not supported.');
+            return;
           }
+          textureModel.setTextureType(display: display, gpuTexture: gpuTexture);
+          onEvent2UIRgba();
         }
       }();
     });
@@ -2608,8 +2617,9 @@ class FFI {
         remember: remember);
   }
 
-  void send2FA(SessionID sessionId, String code) {
-    bind.sessionSend2Fa(sessionId: sessionId, code: code);
+  void send2FA(SessionID sessionId, String code, bool trustThisDevice) {
+    bind.sessionSend2Fa(
+        sessionId: sessionId, code: code, trustThisDevice: trustThisDevice);
   }
 
   /// Close the remote session.
@@ -2626,7 +2636,7 @@ class FFI {
           canvasModel.scale,
           ffiModel.pi.currentDisplay);
     }
-    imageModel.update(null);
+    await imageModel.update(null);
     cursorModel.clear();
     ffiModel.clear();
     canvasModel.clear();

@@ -196,7 +196,7 @@ class ServerModel with ChangeNotifier {
       bind.mainSetOption(key: kOptionEnableAudio, value: "N");
     } else {
       final audioOption = await bind.mainGetOption(key: kOptionEnableAudio);
-      _audioOk = audioOption.isEmpty;
+      _audioOk = audioOption != 'N';
     }
 
     // file
@@ -206,7 +206,7 @@ class ServerModel with ChangeNotifier {
     } else {
       final fileOption =
           await bind.mainGetOption(key: kOptionEnableFileTransfer);
-      _fileOk = fileOption.isEmpty;
+      _fileOk = fileOption != 'N';
     }
 
     notifyListeners();
@@ -826,7 +826,7 @@ class Client {
   Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = <String, dynamic>{};
     data['id'] = id;
-    data['is_start'] = authorized;
+    data['authorized'] = authorized;
     data['is_file_transfer'] = isFileTransfer;
     data['port_forward'] = portForward;
     data['name'] = name;
@@ -840,6 +840,8 @@ class Client {
     data['block_input'] = blockInput;
     data['disconnected'] = disconnected;
     data['from_switch'] = fromSwitch;
+    data['in_voice_call'] = inVoiceCall;
+    data['incoming_voice_call'] = incomingVoiceCall;
     return data;
   }
 

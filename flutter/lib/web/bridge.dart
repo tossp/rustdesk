@@ -23,6 +23,7 @@ sealed class EventToUI {
   ) = EventToUI_Rgba;
   const factory EventToUI.texture(
     int field0,
+    bool field1,
   ) = EventToUI_Texture;
 }
 
@@ -33,15 +34,19 @@ class EventToUI_Event implements EventToUI {
 }
 
 class EventToUI_Rgba implements EventToUI {
-  const EventToUI_Rgba(final int field0) : this.field = field0;
+  const EventToUI_Rgba(final int field0) : field = field0;
   final int field;
   int get field0 => field;
 }
 
 class EventToUI_Texture implements EventToUI {
-  const EventToUI_Texture(final int field0) : this.field = field0;
-  final int field;
-  int get field0 => field;
+  const EventToUI_Texture(final int field0, final bool field1)
+      : f0 = field0,
+        f1 = field1;
+  final int f0;
+  final bool f1;
+  int get field0 => f0;
+  bool get field1 => f1;
 }
 
 class RustdeskImpl {
@@ -142,7 +147,10 @@ class RustdeskImpl {
   }
 
   Future<void> sessionSend2Fa(
-      {required UuidValue sessionId, required String code, dynamic hint}) {
+      {required UuidValue sessionId,
+      required String code,
+      required bool trustThisDevice,
+      dynamic hint}) {
     return Future(() => js.context.callMethod('setByName', ['send_2fa', code]));
   }
 
@@ -226,7 +234,7 @@ class RustdeskImpl {
   }
 
   String getLocalKbLayoutType({dynamic hint}) {
-    throw js.context.callMethod('getByName', ['option:local', 'kb_layout']);
+    return js.context.callMethod('getByName', ['option:local', 'kb_layout']);
   }
 
   Future<void> setLocalKbLayoutType(
@@ -343,7 +351,7 @@ class RustdeskImpl {
 
   bool sessionIsKeyboardModeSupported(
       {required UuidValue sessionId, required String mode, dynamic hint}) {
-    return mode == kKeyLegacyMode;
+    return [kKeyLegacyMode, kKeyMapMode].contains(mode);
   }
 
   bool sessionIsMultiUiSession({required UuidValue sessionId, dynamic hint}) {
@@ -391,13 +399,30 @@ class RustdeskImpl {
 
   Future<void> sessionHandleFlutterKeyEvent(
       {required UuidValue sessionId,
+      required String character,
+      required int usbHid,
+      required int lockModes,
+      required bool downOrUp,
+      dynamic hint}) {
+    return Future(() => js.context.callMethod('setByName', [
+          'flutter_key_event',
+          jsonEncode({
+            'name': character,
+            'usb_hid': usbHid,
+            'lock_modes': lockModes,
+            if (downOrUp) 'down': 'true',
+          })
+        ]));
+  }
+
+  Future<void> sessionHandleFlutterRawKeyEvent(
+      {required UuidValue sessionId,
       required String name,
       required int platformCode,
       required int positionCode,
       required int lockModes,
       required bool downOrUp,
       dynamic hint}) {
-    // TODO: map mode
     throw UnimplementedError();
   }
 
@@ -699,11 +724,11 @@ class RustdeskImpl {
   }
 
   Future<String> mainGetAppName({dynamic hint}) {
-    throw UnimplementedError();
+    return Future.value(mainGetAppNameSync(hint: hint));
   }
 
   String mainGetAppNameSync({dynamic hint}) {
-    throw UnimplementedError();
+    return 'RustDesk';
   }
 
   String mainUriPrefixSync({dynamic hint}) {
@@ -755,8 +780,9 @@ class RustdeskImpl {
   }
 
   Future<bool> mainIsUsingPublicServer({dynamic hint}) {
-    return Future(
-        () => js.context.callMethod('setByName', ["is_using_public_server"]));
+    return Future(() =>
+        js.context.callMethod('getByName', ["is_using_public_server"]) ==
+        'true');
   }
 
   Future<void> mainDiscover({dynamic hint}) {
@@ -1412,7 +1438,7 @@ class RustdeskImpl {
     return false;
   }
 
-  bool mainHideDocker({dynamic hint}) {
+  bool mainHideDock({dynamic hint}) {
     throw UnimplementedError();
   }
 
@@ -1607,7 +1633,7 @@ class RustdeskImpl {
   }
 
   bool mainIsOptionFixed({required String key, dynamic hint}) {
-    throw UnimplementedError();
+    return false;
   }
 
   bool mainGetUseTextureRender({dynamic hint}) {
@@ -1619,6 +1645,62 @@ class RustdeskImpl {
   }
 
   Future<String> mainVerifyBot({required String token, dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  String mainGetUnlockPin({dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  String mainSetUnlockPin({required String pin, dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  bool sessionGetEnableTrustedDevices(
+      {required UuidValue sessionId, dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  Future<String> mainGetTrustedDevices({dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  Future<void> mainRemoveTrustedDevices({required String json, dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  Future<void> mainClearTrustedDevices({dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  Future<String> getVoiceCallInputDevice({required bool isCm, dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  Future<void> setVoiceCallInputDevice(
+      {required bool isCm, required String device, dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  bool isPresetPasswordMobileOnly({dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  String mainGetBuildinOption({required String key, dynamic hint}) {
+    return '';
+  }
+
+  String installInstallOptions({dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  sessionRenameFile(
+      {required UuidValue sessionId,
+      required int actId,
+      required String path,
+      required String newName,
+      required bool isRemote,
+      dynamic hint}) {
     throw UnimplementedError();
   }
 

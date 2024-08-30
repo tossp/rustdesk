@@ -78,7 +78,8 @@ class DesktopSettingPage extends StatefulWidget {
   DesktopSettingPage({Key? key, required this.initialTabkey}) : super(key: key);
 
   @override
-  State<DesktopSettingPage> createState() => _DesktopSettingPageState();
+  State<DesktopSettingPage> createState() =>
+      _DesktopSettingPageState(initialTabkey);
 
   static void switch2page(SettingsTabKey page) {
     try {
@@ -111,10 +112,8 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   @override
   bool get wantKeepAlive => true;
 
-  @override
-  void initState() {
-    super.initState();
-    var initialIndex = DesktopSettingPage.tabKeys.indexOf(widget.initialTabkey);
+  _DesktopSettingPageState(SettingsTabKey initialTabkey) {
+    var initialIndex = DesktopSettingPage.tabKeys.indexOf(initialTabkey);
     if (initialIndex == -1) {
       initialIndex = 0;
     }
@@ -516,16 +515,16 @@ class _GeneralState extends State<_General> {
     }
 
     builder(devices, currentDevice, setDevice) {
-      return _Card(title: 'Audio Input Device', children: [
-        ...devices.map((device) => _Radio<String>(context,
-                value: device,
-                groupValue: currentDevice,
-                autoNewLine: false,
-                label: device, onChanged: (value) {
-              setDevice(value);
-              setState(() {});
-            }))
-      ]);
+      final child = ComboBox(
+        keys: devices,
+        values: devices,
+        initialKey: currentDevice,
+        onChanged: (key) async {
+          setDevice(key);
+          setState(() {});
+        },
+      ).marginOnly(left: _kContentHMargin);
+      return _Card(title: 'Audio Input Device', children: [child]);
     }
 
     return AudioInput(builder: builder, isCm: false, isVoiceCall: false);
@@ -784,8 +783,33 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
           onChangedBot(!hasBot.value);
         },
       ).marginOnly(left: _kCheckBoxLeftMargin + 30);
+
+      final trust = Row(
+        children: [
+          Flexible(
+            child: Tooltip(
+              waitDuration: Duration(milliseconds: 300),
+              message: translate("enable-trusted-devices-tip"),
+              child: _OptionCheckBox(context, "Enable trusted devices",
+                  kOptionEnableTrustedDevices,
+                  enabled: !locked, update: (v) {
+                setState(() {});
+              }),
+            ),
+          ),
+          if (mainGetBoolOptionSync(kOptionEnableTrustedDevices))
+            ElevatedButton(
+                onPressed: locked
+                    ? null
+                    : () {
+                        manageTrustedDeviceDialog();
+                      },
+                child: Text(translate('Manage trusted devices')))
+        ],
+      ).marginOnly(left: 30);
+
       return Column(
-        children: [tfa, bot],
+        children: [tfa, bot, trust],
       );
     }
 
@@ -1019,6 +1043,7 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
         _OptionCheckBox(context, 'allow-only-conn-window-open-tip',
             'allow-only-conn-window-open',
             reverse: false, enabled: enabled),
+      if (bind.mainIsInstalled()) unlockPin()
     ]);
   }
 
@@ -1119,12 +1144,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
     bool enabled = !locked;
     // Simple temp wrapper for PR check
     tmpWrapper() {
-      RxBool hasWhitelist = (bind.mainGetOptionSync(key: kOptionWhitelist) !=
-              defaultOptionWhitelist)
-          .obs;
+      RxBool hasWhitelist = whitelistNotEmpty().obs;
       update() async {
-        hasWhitelist.value = bind.mainGetOptionSync(key: kOptionWhitelist) !=
-            defaultOptionWhitelist;
+        hasWhitelist.value = whitelistNotEmpty();
       }
 
       onChanged(bool? checked) async {
@@ -1268,6 +1290,40 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
         );
       }(),
     ];
+  }
+
+  Widget unlockPin() {
+    bool enabled = !locked;
+    RxString unlockPin = bind.mainGetUnlockPin().obs;
+    update() async {
+      unlockPin.value = bind.mainGetUnlockPin();
+    }
+
+    onChanged(bool? checked) async {
+      changeUnlockPinDialog(unlockPin.value, update);
+    }
+
+    final isOptFixed = isOptionFixed(kOptionWhitelist);
+    return GestureDetector(
+      child: Obx(() => Row(
+            children: [
+              Checkbox(
+                      value: unlockPin.isNotEmpty,
+                      onChanged: enabled && !isOptFixed ? onChanged : null)
+                  .marginOnly(right: 5),
+              Expanded(
+                  child: Text(
+                translate('Unlock with PIN'),
+                style: TextStyle(color: disabledTextColor(context, enabled)),
+              ))
+            ],
+          )),
+      onTap: enabled
+          ? () {
+              onChanged(!unlockPin.isNotEmpty);
+            }
+          : null,
+    ).marginOnly(left: _kCheckBoxLeftMargin);
   }
 }
 
@@ -1809,7 +1865,7 @@ class _AboutState extends State<_About> {
           child: SingleChildScrollView(
             controller: scrollController,
             physics: DraggableNeverScrollableScrollPhysics(),
-            child: _Card(title: '${translate('About')} RustDesk', children: [
+            child: _Card(title: translate('About RustDesk'), children: [
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2164,9 +2220,14 @@ Widget _lock(
                             Text(translate(label)).marginOnly(left: 5),
                           ]).marginSymmetric(vertical: 2)),
                   onPressed: () async {
-                    bool checked = await callMainCheckSuperUserPermission();
-                    if (checked) {
-                      onUnlock();
+                    final unlockPin = bind.mainGetUnlockPin();
+                    if (unlockPin.isEmpty) {
+                      bool checked = await callMainCheckSuperUserPermission();
+                      if (checked) {
+                        onUnlock();
+                      }
+                    } else {
+                      checkUnlockPinDialog(unlockPin, onUnlock);
                     }
                   },
                 ).marginSymmetric(horizontal: 2, vertical: 4),
