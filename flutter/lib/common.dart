@@ -31,7 +31,6 @@ import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
 import 'desktop/pages/remote_page.dart' as desktop_remote;
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
-import 'models/input_model.dart';
 import 'models/model.dart';
 import 'models/platform_model.dart';
 
@@ -51,6 +50,9 @@ final isLinux = isLinux_;
 final isDesktop = isDesktop_;
 final isWeb = isWeb_;
 final isWebDesktop = isWebDesktop_;
+final isWebOnWindows = isWebOnWindows_;
+final isWebOnLinux = isWebOnLinux_;
+final isWebOnMacOs = isWebOnMacOS_;
 var isMobile = isAndroid || isIOS;
 var version = '';
 int androidVersion = 0;
@@ -348,6 +350,9 @@ class MyTheme {
     hoverColor: Color.fromARGB(255, 224, 224, 224),
     scaffoldBackgroundColor: Colors.white,
     dialogBackgroundColor: Colors.white,
+    appBarTheme: AppBarTheme(
+      shadowColor: Colors.transparent,
+    ),
     dialogTheme: DialogTheme(
       elevation: 15,
       shape: RoundedRectangleBorder(
@@ -443,6 +448,9 @@ class MyTheme {
     hoverColor: Color.fromARGB(255, 45, 46, 53),
     scaffoldBackgroundColor: Color(0xFF18191E),
     dialogBackgroundColor: Color(0xFF18191E),
+    appBarTheme: AppBarTheme(
+      shadowColor: Colors.transparent,
+    ),
     dialogTheme: DialogTheme(
       elevation: 15,
       shape: RoundedRectangleBorder(
@@ -548,7 +556,7 @@ class MyTheme {
 
   static void changeDarkMode(ThemeMode mode) async {
     Get.changeThemeMode(mode);
-    if (desktopType == DesktopType.main || isAndroid || isIOS) {
+    if (desktopType == DesktopType.main || isAndroid || isIOS || isWeb) {
       if (mode == ThemeMode.system) {
         await bind.mainSetLocalOption(
             key: kCommConfKeyTheme, value: defaultOptionTheme);
@@ -556,7 +564,7 @@ class MyTheme {
         await bind.mainSetLocalOption(
             key: kCommConfKeyTheme, value: mode.toShortString());
       }
-      await bind.mainChangeTheme(dark: mode.toShortString());
+      if (!isWeb) await bind.mainChangeTheme(dark: mode.toShortString());
       // Synchronize the window theme of the system.
       updateSystemWindowTheme();
     }
@@ -630,10 +638,30 @@ List<Locale> supportedLocales = const [
   Locale('da'),
   Locale('eo'),
   Locale('tr'),
-  Locale('vi'),
-  Locale('pl'),
   Locale('kz'),
   Locale('es'),
+  Locale('nl'),
+  Locale('nb'),
+  Locale('et'),
+  Locale('eu'),
+  Locale('bg'),
+  Locale('be'),
+  Locale('vn'),
+  Locale('uk'),
+  Locale('fa'),
+  Locale('ca'),
+  Locale('el'),
+  Locale('sv'),
+  Locale('sq'),
+  Locale('sr'),
+  Locale('th'),
+  Locale('sl'),
+  Locale('ro'),
+  Locale('lt'),
+  Locale('lv'),
+  Locale('ar'),
+  Locale('he'),
+  Locale('hr'),
 ];
 
 String formatDurationToTime(Duration duration) {
@@ -647,8 +675,12 @@ String formatDurationToTime(Duration duration) {
 
 closeConnection({String? id}) {
   if (isAndroid || isIOS) {
-    gFFI.chatModel.hideChatOverlay();
-    Navigator.popUntil(globalKey.currentContext!, ModalRoute.withName("/"));
+    () async {
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+          overlays: SystemUiOverlay.values);
+      gFFI.chatModel.hideChatOverlay();
+      Navigator.popUntil(globalKey.currentContext!, ModalRoute.withName("/"));
+    }();
   } else {
     if (isWeb) {
       Navigator.popUntil(globalKey.currentContext!, ModalRoute.withName("/"));
@@ -1054,6 +1086,49 @@ class CustomAlertDialog extends StatelessWidget {
   }
 }
 
+Widget createDialogContent(String text) {
+  final RegExp linkRegExp = RegExp(r'(https?://[^\s]+)');
+  final List<TextSpan> spans = [];
+  int start = 0;
+  bool hasLink = false;
+
+  linkRegExp.allMatches(text).forEach((match) {
+    hasLink = true;
+    if (match.start > start) {
+      spans.add(TextSpan(text: text.substring(start, match.start)));
+    }
+    spans.add(TextSpan(
+      text: match.group(0) ?? '',
+      style: TextStyle(
+        color: Colors.blue,
+        decoration: TextDecoration.underline,
+      ),
+      recognizer: TapGestureRecognizer()
+        ..onTap = () {
+          String linkText = match.group(0) ?? '';
+          linkText = linkText.replaceAll(RegExp(r'[.,;!?]+$'), '');
+          launchUrl(Uri.parse(linkText));
+        },
+    ));
+    start = match.end;
+  });
+
+  if (start < text.length) {
+    spans.add(TextSpan(text: text.substring(start)));
+  }
+
+  if (!hasLink) {
+    return SelectableText(text, style: const TextStyle(fontSize: 15));
+  }
+
+  return SelectableText.rich(
+    TextSpan(
+      style: TextStyle(color: Colors.black, fontSize: 15),
+      children: spans,
+    ),
+  );
+}
+
 void msgBox(SessionID sessionId, String type, String title, String text,
     String link, OverlayDialogManager dialogManager,
     {bool? hasCancel, ReconnectHandle? reconnect, int? reconnectTimeout}) {
@@ -1062,7 +1137,7 @@ void msgBox(SessionID sessionId, String type, String title, String text,
   bool hasOk = false;
   submit() {
     dialogManager.dismissAll();
-    // https://github.com/fufesou/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
+    // https://github.com/rustdesk/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
     if (!type.contains("custom") && desktopType != DesktopType.portForward) {
       closeConnection();
     }
@@ -1211,7 +1286,7 @@ Widget msgboxContent(String type, String title, String text) {
               translate(title),
               style: TextStyle(fontSize: 21),
             ).marginOnly(bottom: 10),
-            Text(translateText(text), style: const TextStyle(fontSize: 15)),
+            createDialogContent(translateText(text)),
           ],
         ),
       ),
@@ -1406,14 +1481,10 @@ class AndroidPermissionManager {
   }
 }
 
-// TODO move this to mobile/widgets.
-// Used only for mobile, pages remote, settings, dialog
-// TODO remove argument contentPadding, it’s not used, getToggle() has not
 RadioListTile<T> getRadio<T>(
     Widget title, T toValue, T curValue, ValueChanged<T?>? onChange,
-    {EdgeInsetsGeometry? contentPadding, bool? dense}) {
+    {bool? dense}) {
   return RadioListTile<T>(
-    contentPadding: contentPadding ?? EdgeInsets.zero,
     visualDensity: VisualDensity.compact,
     controlAffinity: ListTileControlAffinity.trailing,
     title: title,
@@ -2814,7 +2885,7 @@ Widget buildErrorBanner(BuildContext context,
                     alignment: Alignment.centerLeft,
                     child: Tooltip(
                       message: translate(err.value),
-                      child: Text(
+                      child: SelectableText(
                         translate(err.value),
                       ),
                     )).marginSymmetric(vertical: 2),
@@ -2935,6 +3006,16 @@ openMonitorInTheSameTab(int i, FFI ffi, PeerInfo pi,
   final displays = i == kAllDisplayValue
       ? List.generate(pi.displays.length, (index) => index)
       : [i];
+  // Try clear image model before switching from all displays
+  // 1. The remote side has multiple displays.
+  // 2. Do not use texture render.
+  // 3. Connect to Display 1.
+  // 4. Switch to multi-displays `kAllDisplayValue`
+  // 5. Switch to Display 2.
+  // Then the remote page will display last picture of Display 1 at the beginning.
+  if (pi.forceTextureRender && i != kAllDisplayValue) {
+    ffi.imageModel.clearImage();
+  }
   bind.sessionSwitchDisplay(
     isDesktop: isDesktop,
     sessionId: ffi.sessionId,
@@ -2968,11 +3049,15 @@ openMonitorInNewTabOrWindow(int i, String peerId, PeerInfo pi,
       kMainWindowId, kWindowEventOpenMonitorSession, jsonEncode(args));
 }
 
-setNewConnectWindowFrame(
-    int windowId, String peerId, int? display, Rect? screenRect) async {
+setNewConnectWindowFrame(int windowId, String peerId, int preSessionCount,
+    int? display, Rect? screenRect) async {
   if (screenRect == null) {
-    await restoreWindowPosition(WindowType.RemoteDesktop,
-        windowId: windowId, display: display, peerId: peerId);
+    // Do not restore window position to new connection if there's a pre-session.
+    // https://github.com/rustdesk/rustdesk/discussions/8825
+    if (preSessionCount == 0) {
+      await restoreWindowPosition(WindowType.RemoteDesktop,
+          windowId: windowId, display: display, peerId: peerId);
+    }
   } else {
     await tryMoveToScreenAndSetFullscreen(screenRect);
   }
@@ -3069,6 +3154,7 @@ class _ReconnectCountDownButtonState extends State<_ReconnectCountDownButton> {
 
 importConfig(List<TextEditingController>? controllers, List<RxString>? errMsgs,
     String? text) {
+  text = text?.trim();
   if (text != null && text.isNotEmpty) {
     try {
       final sc = ServerConfig.decode(text);
@@ -3098,9 +3184,16 @@ Future<bool> setServerConfig(
   List<RxString>? errMsgs,
   ServerConfig config,
 ) async {
-  config.idServer = config.idServer.trim();
-  config.relayServer = config.relayServer.trim();
-  config.apiServer = config.apiServer.trim();
+  String removeEndSlash(String input) {
+    if (input.endsWith('/')) {
+      return input.substring(0, input.length - 1);
+    }
+    return input;
+  }
+
+  config.idServer = removeEndSlash(config.idServer.trim());
+  config.relayServer = removeEndSlash(config.relayServer.trim());
+  config.apiServer = removeEndSlash(config.apiServer.trim());
   config.key = config.key.trim();
   if (controllers != null) {
     controllers[0].text = config.idServer;
@@ -3309,6 +3402,42 @@ bool isInHomePage() {
   return controller.state.value.selected == 0;
 }
 
+Widget _buildPresetPasswordWarning() {
+  if (bind.mainGetBuildinOption(key: kOptionRemovePresetPasswordWarning) !=
+      'N') {
+    return SizedBox.shrink();
+  }
+  return Container(
+    color: Colors.yellow,
+    child: Column(
+      children: [
+        Align(
+            child: Text(
+          translate("Security Alert"),
+          style: TextStyle(
+            color: Colors.red,
+            fontSize:
+                18, // https://github.com/rustdesk/rustdesk-server-pro/issues/261
+            fontWeight: FontWeight.bold,
+          ),
+        )).paddingOnly(bottom: 8),
+        Text(
+          translate("preset_password_warning"),
+          style: TextStyle(color: Colors.red),
+        )
+      ],
+    ).paddingAll(8),
+  ); // Show a warning message if the Future completed with true
+}
+
+Widget buildPresetPasswordWarningMobile() {
+  if (bind.isPresetPasswordMobileOnly()) {
+    return _buildPresetPasswordWarning();
+  } else {
+    return SizedBox.shrink();
+  }
+}
+
 Widget buildPresetPasswordWarning() {
   return FutureBuilder<bool>(
     future: bind.isPresetPassword(),
@@ -3319,32 +3448,7 @@ Widget buildPresetPasswordWarning() {
         return Text(
             'Error: ${snapshot.error}'); // Show an error message if the Future completed with an error
       } else if (snapshot.hasData && snapshot.data == true) {
-        if (bind.mainGetBuildinOption(
-                key: kOptionRemovePresetPasswordWarning) !=
-            'N') {
-          return SizedBox.shrink();
-        }
-        return Container(
-          color: Colors.yellow,
-          child: Column(
-            children: [
-              Align(
-                  child: Text(
-                translate("Security Alert"),
-                style: TextStyle(
-                  color: Colors.red,
-                  fontSize:
-                      18, // https://github.com/rustdesk/rustdesk-server-pro/issues/261
-                  fontWeight: FontWeight.bold,
-                ),
-              )).paddingOnly(bottom: 8),
-              Text(
-                translate("preset_password_warning"),
-                style: TextStyle(color: Colors.red),
-              )
-            ],
-          ).paddingAll(8),
-        ); // Show a warning message if the Future completed with true
+        return _buildPresetPasswordWarning();
       } else {
         return SizedBox
             .shrink(); // Show nothing if the Future completed with false or null
@@ -3398,7 +3502,8 @@ Widget buildVirtualWindowFrame(BuildContext context, Widget child) {
   );
 }
 
-get windowEdgeSize => isLinux && !_linuxWindowResizable ? 0.0 : kWindowEdgeSize;
+get windowResizeEdgeSize =>
+    isLinux && !_linuxWindowResizable ? 0.0 : kWindowResizeEdgeSize;
 
 // `windowManager.setResizable(false)` will reset the window size to the default size on Linux and then set unresizable.
 // See _linuxWindowResizable for more details.
@@ -3416,7 +3521,12 @@ setResizable(bool resizable) {
 
 isOptionFixed(String key) => bind.mainIsOptionFixed(key: key);
 
-final isCustomClient = bind.isCustomClient();
+bool? _isCustomClient;
+bool get isCustomClient {
+  _isCustomClient ??= bind.isCustomClient();
+  return _isCustomClient!;
+}
+
 get defaultOptionLang => isCustomClient ? 'default' : '';
 get defaultOptionTheme => isCustomClient ? 'system' : '';
 get defaultOptionYes => isCustomClient ? 'Y' : '';
@@ -3424,6 +3534,12 @@ get defaultOptionNo => isCustomClient ? 'N' : '';
 get defaultOptionWhitelist => isCustomClient ? ',' : '';
 get defaultOptionAccessMode => isCustomClient ? 'custom' : '';
 get defaultOptionApproveMode => isCustomClient ? 'password-click' : '';
+
+bool whitelistNotEmpty() {
+  // https://rustdesk.com/docs/en/self-host/client-configuration/advanced-settings/#whitelist
+  final v = bind.mainGetOptionSync(key: kOptionWhitelist);
+  return v != '' && v != ',';
+}
 
 // `setMovable()` is only supported on macOS.
 //
@@ -3448,3 +3564,36 @@ disableWindowMovable(int? windowId) {
     WindowController.fromWindowId(windowId).setMovable(false);
   }
 }
+
+Widget netWorkErrorWidget() {
+  return Center(
+      child: Column(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: CrossAxisAlignment.center,
+    children: [
+      Text(translate("network_error_tip")),
+      ElevatedButton(
+              onPressed: gFFI.userModel.refreshCurrentUser,
+              child: Text(translate("Retry")))
+          .marginSymmetric(vertical: 16),
+      SelectableText(gFFI.userModel.networkError.value,
+          style: TextStyle(fontSize: 11, color: Colors.red)),
+    ],
+  ));
+}
+
+List<ResizeEdge>? get windowManagerEnableResizeEdges => isWindows
+    ? [
+        ResizeEdge.topLeft,
+        ResizeEdge.top,
+        ResizeEdge.topRight,
+      ]
+    : null;
+
+List<SubWindowResizeEdge>? get subWindowManagerEnableResizeEdges => isWindows
+    ? [
+        SubWindowResizeEdge.topLeft,
+        SubWindowResizeEdge.top,
+        SubWindowResizeEdge.topRight,
+      ]
+    : null;
