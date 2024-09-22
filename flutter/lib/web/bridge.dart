@@ -187,7 +187,7 @@ class RustdeskImpl {
   Future<void> sessionToggleOption(
       {required UuidValue sessionId, required String value, dynamic hint}) {
     return Future(
-        () => js.context.callMethod('setByName', ['toggle_option', value]));
+        () => js.context.callMethod('setByName', ['option:toggle', value]));
   }
 
   Future<void> sessionTogglePrivacyMode(
@@ -196,8 +196,8 @@ class RustdeskImpl {
       required bool on,
       dynamic hint}) {
     return Future(() => js.context.callMethod('setByName', [
-          'toggle_option',
-          jsonEncode({implKey, on})
+          'toggle_privacy_mode',
+          jsonEncode({'impl_key': implKey, 'on': on})
         ]));
   }
 
@@ -391,9 +391,9 @@ class RustdeskImpl {
     return Future(() => js.context.callMethod('setByName', [
           'switch_display',
           jsonEncode({
-            isDesktop: isDesktop,
-            sessionId: sessionId.toString(),
-            value: value
+            'isDesktop': isDesktop,
+            'sessionId': sessionId.toString(),
+            'value': value
           })
         ]));
   }
@@ -1204,8 +1204,10 @@ class RustdeskImpl {
       required int index,
       required bool on,
       dynamic hint}) {
-    // TODO
-    throw UnimplementedError();
+    return Future(() => js.context.callMethod('setByName', [
+          'toggle_virtual_display',
+          jsonEncode({'index': index, 'on': on})
+        ]));
   }
 
   Future<void> mainSetHomeDir({required String home, dynamic hint}) {
@@ -1701,6 +1703,10 @@ class RustdeskImpl {
   }
 
   String installInstallOptions({dynamic hint}) {
+    throw UnimplementedError();
+  }
+
+  int mainMaxEncryptLen({dynamic hint}) {
     throw UnimplementedError();
   }
 
