@@ -346,7 +346,7 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Dark", "黑暗"),
         ("Light", "明亮"),
         ("Follow System", "跟随系统"),
-        ("Enable hardware codec", "使能硬件编解码"),
+        ("Enable hardware codec", "启用硬件编解码"),
         ("Unlock Security Settings", "解锁安全设置"),
         ("Enable audio", "允许传输音频"),
         ("Unlock Network Settings", "解锁网络设置"),
@@ -655,5 +655,6 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("Clipboard is synchronized", "剪贴板已同步"),
         ("Update client clipboard", "更新客户端的粘贴板"),
         ("Untagged", "无标签"),
+        ("new-version-of-{}-tip", "{} 版本更新"),
     ].iter().cloned().collect();
 }
