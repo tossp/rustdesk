@@ -80,7 +80,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
       slivers: [
         SliverList(
             delegate: SliverChildListDelegate([
-          if (!bind.isCustomClient())
+          if (!bind.isCustomClient() && !isIOS)
             Obx(() => _buildUpdateUI(stateGlobal.updateUrl.value)),
           _buildRemoteIDTextField(),
         ])),
@@ -174,6 +174,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                           rdpPort: '',
                           rdpUsername: '',
                           loginName: '',
+                          device_group_name: '',
                         );
                         _autocompleteOpts = [emptyPeer];
                       } else {
