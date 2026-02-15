@@ -11,8 +11,10 @@ import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/pages/install_page.dart';
 import 'package:flutter_hbb/desktop/pages/server_page.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_file_transfer_screen.dart';
+import 'package:flutter_hbb/desktop/screen/desktop_view_camera_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_port_forward_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_remote_screen.dart';
+import 'package:flutter_hbb/desktop/screen/desktop_terminal_screen.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
@@ -76,6 +78,13 @@ Future<void> main(List<String> args) async {
           kAppTypeDesktopFileTransfer,
         );
         break;
+      case WindowType.ViewCamera:
+        desktopType = DesktopType.viewCamera;
+        runMultiWindow(
+          argument,
+          kAppTypeDesktopViewCamera,
+        );
+        break;
       case WindowType.PortForward:
         desktopType = DesktopType.portForward;
         runMultiWindow(
@@ -83,6 +92,12 @@ Future<void> main(List<String> args) async {
           kAppTypeDesktopPortForward,
         );
         break;
+      case WindowType.Terminal:
+        desktopType = DesktopType.terminal;
+        runMultiWindow(
+          argument,
+          kAppTypeDesktopTerminal,
+        );
       default:
         break;
     }
@@ -132,9 +147,15 @@ void runMainApp(bool startService) async {
   gFFI.userModel.refreshCurrentUser();
   runApp(App());
 
+  bool? alwaysOnTop;
+  if (isDesktop) {
+    alwaysOnTop =
+        bind.mainGetBuildinOption(key: "main-window-always-on-top") == 'Y';
+  }
+
   // Set window option.
-  WindowOptions windowOptions =
-      getHiddenTitleBarWindowOptions(isMainWindow: true);
+  WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
+      isMainWindow: true, alwaysOnTop: alwaysOnTop);
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     // Restore the location of the main window before window hide or show.
     await restoreWindowPosition(WindowType.Main);
@@ -192,8 +213,19 @@ void runMultiWindow(
         params: argument,
       );
       break;
+    case kAppTypeDesktopViewCamera:
+      draggablePositions.load();
+      widget = DesktopViewCameraScreen(
+        params: argument,
+      );
+      break;
     case kAppTypeDesktopPortForward:
       widget = DesktopPortForwardScreen(
+        params: argument,
+      );
+      break;
+    case kAppTypeDesktopTerminal:
+      widget = DesktopTerminalScreen(
         params: argument,
       );
       break;
@@ -227,8 +259,24 @@ void runMultiWindow(
       await restoreWindowPosition(WindowType.FileTransfer,
           windowId: kWindowId!);
       break;
+    case kAppTypeDesktopViewCamera:
+      // If screen rect is set, the window will be moved to the target screen and then set fullscreen.
+      if (argument['screen_rect'] == null) {
+        // display can be used to control the offset of the window.
+        await restoreWindowPosition(
+          WindowType.ViewCamera,
+          windowId: kWindowId!,
+          peerId: argument['id'] as String?,
+          // FIXME: fix display index.
+          display: argument['display'] as int?,
+        );
+      }
+      break;
     case kAppTypeDesktopPortForward:
       await restoreWindowPosition(WindowType.PortForward, windowId: kWindowId!);
+      break;
+    case kAppTypeDesktopTerminal:
+      await restoreWindowPosition(WindowType.Terminal, windowId: kWindowId!);
       break;
     default:
       // no such appType

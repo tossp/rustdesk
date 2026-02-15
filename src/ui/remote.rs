@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, RwLock},
+    sync::{atomic::AtomicUsize, Arc, Mutex, RwLock},
 };
 
 use sciter::{
@@ -125,8 +125,9 @@ impl InvokeUiSession for SciterHandler {
         }
     }
 
-    fn set_display(&self, x: i32, y: i32, w: i32, h: i32, cursor_embedded: bool) {
-        self.call("setDisplay", &make_args!(x, y, w, h, cursor_embedded));
+    fn set_display(&self, x: i32, y: i32, w: i32, h: i32, cursor_embedded: bool, scale: f64) {
+        let scale = if scale <= 0.0 { 1.0 } else { scale };
+        self.call("setDisplay", &make_args!(x, y, w, h, cursor_embedded, scale));
         // https://sciter.com/forums/topic/color_spaceiyuv-crash
         // Nothing spectacular in decoder – done on CPU side.
         // So if you can do BGRA translation on your side – the better.
@@ -178,8 +179,11 @@ impl InvokeUiSession for SciterHandler {
         self.call("setCursorPosition", &make_args!(cp.x, cp.y));
     }
 
-    fn set_connection_type(&self, is_secured: bool, direct: bool) {
-        self.call("setConnectionType", &make_args!(is_secured, direct));
+    fn set_connection_type(&self, is_secured: bool, direct: bool, stream_type: &str) {
+        self.call(
+            "setConnectionType",
+            &make_args!(is_secured, direct, stream_type.to_string()),
+        );
     }
 
     fn set_fingerprint(&self, _fingerprint: String) {}
@@ -196,7 +200,7 @@ impl InvokeUiSession for SciterHandler {
         self.call("clearAllJobs", &make_args!());
     }
 
-    fn load_last_job(&self, cnt: i32, job_json: &str) {
+    fn load_last_job(&self, cnt: i32, job_json: &str, auto_start: bool) {
         let job: Result<TransferJobMeta, serde_json::Error> = serde_json::from_str(job_json);
         if let Ok(job) = job {
             let path;
@@ -210,7 +214,15 @@ impl InvokeUiSession for SciterHandler {
             }
             self.call(
                 "addJob",
-                &make_args!(cnt, path, to, job.file_num, job.show_hidden, job.is_remote),
+                &make_args!(
+                    cnt,
+                    path,
+                    to,
+                    job.file_num,
+                    job.show_hidden,
+                    job.is_remote,
+                    auto_start
+                ),
             );
         }
     }
@@ -313,12 +325,10 @@ impl InvokeUiSession for SciterHandler {
 
     fn on_connected(&self, conn_type: ConnType) {
         match conn_type {
-            ConnType::RDP => {}
-            ConnType::PORT_FORWARD => {}
-            ConnType::FILE_TRANSFER => {}
             ConnType::DEFAULT_CONN => {
                 crate::keyboard::client::start_grab_loop();
             }
+            _ => {}
         }
     }
 
@@ -374,6 +384,19 @@ impl InvokeUiSession for SciterHandler {
 
     fn update_record_status(&self, start: bool) {
         self.call("updateRecordStatus", &make_args!(start));
+    }
+
+    fn printer_request(&self, id: i32, path: String) {
+        self.call("printerRequest", &make_args!(id, path));
+    }
+
+    fn handle_screenshot_resp(&self, _sid: String, msg: String) {
+        self.call("screenshot", &make_args!(msg));
+    }
+
+    fn handle_terminal_response(&self, _response: TerminalResponse) {
+        // Terminal support is not implemented for Sciter UI
+        // This is a stub implementation to satisfy the trait requirements
     }
 }
 
@@ -487,6 +510,8 @@ impl sciter::EventHandler for SciterSession {
         fn get_chatbox();
         fn get_icon();
         fn get_home_dir();
+        fn get_next_job_id();
+        fn update_next_job_id(i32);
         fn read_dir(String, bool);
         fn remove_dir(i32, String, bool);
         fn create_dir(i32, String, bool);
@@ -498,8 +523,8 @@ impl sciter::EventHandler for SciterSession {
         fn confirm_delete_files(i32, i32);
         fn set_no_confirm(i32);
         fn cancel_job(i32);
-        fn send_files(i32, String, String, i32, bool, bool);
-        fn add_job(i32, String, String, i32, bool, bool);
+        fn send_files(i32, i32, String, String, i32, bool, bool);
+        fn add_job(i32, i32, String, String, i32, bool, bool);
         fn resume_job(i32, bool);
         fn get_platform(bool);
         fn get_path_sep(bool);
@@ -519,6 +544,9 @@ impl sciter::EventHandler for SciterSession {
         fn save_custom_image_quality(i32);
         fn refresh_video(i32);
         fn record_screen(bool);
+        fn is_screenshot_supported();
+        fn take_screenshot(i32, String);
+        fn handle_screenshot(String);
         fn get_toggle_option(String);
         fn is_privacy_mode_supported();
         fn toggle_option(String);
@@ -529,7 +557,7 @@ impl sciter::EventHandler for SciterSession {
         fn is_keyboard_mode_supported(String);
         fn save_keyboard_mode(String);
         fn alternative_codecs();
-        fn change_prefer_codec();
+        fn update_supported_decodings();
         fn restart_remote_device();
         fn request_voice_call();
         fn close_voice_call();
@@ -537,6 +565,8 @@ impl sciter::EventHandler for SciterSession {
         fn set_selected_windows_session_id(String);
         fn is_recording();
         fn has_file_clipboard();
+        fn get_printer_names();
+        fn on_printer_selected(i32, String, String);
     }
 }
 
@@ -549,11 +579,14 @@ impl SciterSession {
             server_keyboard_enabled: Arc::new(RwLock::new(true)),
             server_file_transfer_enabled: Arc::new(RwLock::new(true)),
             server_clipboard_enabled: Arc::new(RwLock::new(true)),
+            reconnect_count: Arc::new(AtomicUsize::new(0)),
             ..Default::default()
         };
 
         let conn_type = if cmd.eq("--file-transfer") {
             ConnType::FILE_TRANSFER
+        } else if cmd.eq("--view-camera") {
+            ConnType::VIEW_CAMERA
         } else if cmd.eq("--port-forward") {
             ConnType::PORT_FORWARD
         } else if cmd.eq("--rdp") {
@@ -835,6 +868,26 @@ impl SciterSession {
 
     fn version_cmp(&self, v1: String, v2: String) -> i32 {
         (hbb_common::get_version_number(&v1) - hbb_common::get_version_number(&v2)) as i32
+    }
+
+    fn get_printer_names(&self) -> Value {
+        #[cfg(target_os = "windows")]
+        let printer_names = crate::platform::windows::get_printer_names().unwrap_or_default();
+        #[cfg(not(target_os = "windows"))]
+        let printer_names: Vec<String> = vec![];
+        let mut v = Value::array(0);
+        for name in printer_names {
+            v.push(name);
+        }
+        v
+    }
+
+    fn on_printer_selected(&self, id: i32, path: String, printer_name: String) {
+        self.printer_response(id, path, printer_name);
+    }
+
+    fn handle_screenshot(&self, action: String) -> String {
+        crate::client::screenshot::handle_screenshot(action)
     }
 }
 

@@ -466,6 +466,7 @@ class _AddressBookState extends State<AddressBook> {
     IDTextEditingController idController = IDTextEditingController(text: '');
     TextEditingController aliasController = TextEditingController(text: '');
     TextEditingController passwordController = TextEditingController(text: '');
+    TextEditingController noteController = TextEditingController(text: '');
     final tags = List.of(gFFI.abModel.currentAbTags);
     var selectedTag = List<dynamic>.empty(growable: true).obs;
     final style = TextStyle(fontSize: 14.0);
@@ -494,7 +495,11 @@ class _AddressBookState extends State<AddressBook> {
             password = passwordController.text;
           }
           String? errMsg2 = await gFFI.abModel.addIdToCurrent(
-              id, aliasController.text.trim(), password, selectedTag);
+              id,
+              aliasController.text.trim(),
+              password,
+              selectedTag,
+              noteController.text);
           if (errMsg2 != null) {
             setState(() {
               isInProgress = false;
@@ -509,13 +514,13 @@ class _AddressBookState extends State<AddressBook> {
 
       double marginBottom = 4;
 
-      row({required Widget lable, required Widget input}) {
+      row({required Widget label, required Widget input}) {
         makeChild(bool isPortrait) => Row(
               children: [
                 !isPortrait
                     ? ConstrainedBox(
                         constraints: const BoxConstraints(minWidth: 100),
-                        child: lable.marginOnly(right: 10))
+                        child: label.marginOnly(right: 10))
                     : SizedBox.shrink(),
                 Expanded(
                   child: ConstrainedBox(
@@ -535,7 +540,7 @@ class _AddressBookState extends State<AddressBook> {
             Column(
               children: [
                 row(
-                    lable: Row(
+                    label: Row(
                       children: [
                         Text(
                           '*',
@@ -558,7 +563,7 @@ class _AddressBookState extends State<AddressBook> {
                               errorMaxLines: 5),
                         ).workaroundFreezeLinuxMint())),
                 row(
-                  lable: Text(
+                  label: Text(
                     translate('Alias'),
                     style: style,
                   ),
@@ -573,7 +578,7 @@ class _AddressBookState extends State<AddressBook> {
                 ),
                 if (isCurrentAbShared)
                   row(
-                      lable: Text(
+                      label: Text(
                         translate('Password'),
                         style: style,
                       ),
@@ -600,6 +605,24 @@ class _AddressBookState extends State<AddressBook> {
                           ),
                         ).workaroundFreezeLinuxMint(),
                       )),
+                row(
+                    label: Text(
+                      translate('Note'),
+                      style: style,
+                    ),
+                    input: Obx(
+                      () => TextField(
+                        controller: noteController,
+                        maxLines: 3,
+                        minLines: 1,
+                        maxLength: 300,
+                        decoration: InputDecoration(
+                          labelText: stateGlobal.isPortrait.isFalse
+                              ? null
+                              : translate('Note'),
+                        ),
+                      ).workaroundFreezeLinuxMint(),
+                    )),
                 if (gFFI.abModel.currentAbTags.isNotEmpty)
                   Align(
                     alignment: Alignment.centerLeft,

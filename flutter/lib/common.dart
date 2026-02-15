@@ -13,15 +13,18 @@ import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/models/peer_model.dart';
+import 'package:flutter_hbb/models/peer_tab_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get/get.dart';
+import 'package:get/get_rx/src/rx_workers/utils/debouncer.dart';
 import 'package:provider/provider.dart';
 import 'package:uni_links/uni_links.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:window_size/window_size.dart' as window_size;
 
@@ -29,8 +32,11 @@ import '../consts.dart';
 import 'common/widgets/overlay.dart';
 import 'mobile/pages/file_manager_page.dart';
 import 'mobile/pages/remote_page.dart';
+import 'mobile/pages/view_camera_page.dart';
+import 'mobile/pages/terminal_page.dart';
 import 'desktop/pages/remote_page.dart' as desktop_remote;
 import 'desktop/pages/file_manager_page.dart' as desktop_file_manager;
+import 'desktop/pages/view_camera_page.dart' as desktop_view_camera;
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
 import 'models/model.dart';
 import 'models/platform_model.dart';
@@ -39,6 +45,7 @@ import 'package:flutter_hbb/native/win32.dart'
     if (dart.library.html) 'package:flutter_hbb/web/win32.dart';
 import 'package:flutter_hbb/native/common.dart'
     if (dart.library.html) 'package:flutter_hbb/web/common.dart';
+import 'package:flutter_hbb/utils/http_service.dart' as http;
 
 final globalKey = GlobalKey<NavigatorState>();
 final navigationBarKey = GlobalKey();
@@ -71,6 +78,9 @@ bool _ignoreDevicePixelRatio = true;
 int windowsBuildNumber = 0;
 DesktopType? desktopType;
 
+// Tolerance used for floating-point position comparisons to avoid precision errors.
+const double _kPositionEpsilon = 1e-6;
+
 bool get isMainDesktopWindow =>
     desktopType == DesktopType.main || desktopType == DesktopType.cm;
 
@@ -96,8 +106,14 @@ enum DesktopType {
   main,
   remote,
   fileTransfer,
+  viewCamera,
+  terminal,
   cm,
   portForward,
+}
+
+bool isDoubleEqual(double a, double b) {
+  return (a - b).abs() < _kPositionEpsilon;
 }
 
 class IconFont {
@@ -105,6 +121,8 @@ class IconFont {
   static const _family2 = 'PeerSearchbar';
   static const _family3 = 'AddressBook';
   static const _family4 = 'DeviceGroup';
+  static const _family5 = 'More';
+
   IconFont._();
 
   static const IconData max = IconData(0xe606, fontFamily: _family1);
@@ -120,6 +138,7 @@ class IconFont {
       IconData(0xe623, fontFamily: _family4);
   static const IconData deviceGroupFill =
       IconData(0xe748, fontFamily: _family4);
+  static const IconData more = IconData(0xe609, fontFamily: _family5);
 }
 
 class ColorThemeExtension extends ThemeExtension<ColorThemeExtension> {
@@ -822,7 +841,11 @@ class OverlayDialogManager {
 
     close([res]) {
       _dialogs.remove(dialogTag);
-      dialog.complete(res);
+      try {
+        dialog.complete(res);
+      } catch (e) {
+        debugPrint("Dialog complete catch error: $e");
+      }
       BackButtonInterceptor.removeByName(dialogTag);
     }
 
@@ -988,13 +1011,15 @@ makeMobileActionsOverlayEntry(VoidCallback? onHide, {FFI? ffi}) {
   });
 }
 
-void showToast(String text, {Duration timeout = const Duration(seconds: 3)}) {
+void showToast(String text,
+    {Duration timeout = const Duration(seconds: 3),
+    Alignment alignment = const Alignment(0.0, 0.8)}) {
   final overlayState = globalKey.currentState?.overlay;
   if (overlayState == null) return;
   final entry = OverlayEntry(builder: (context) {
     return IgnorePointer(
         child: Align(
-            alignment: const Alignment(0.0, 0.8),
+            alignment: alignment,
             child: Container(
               decoration: BoxDecoration(
                 color: MyTheme.color(context).toastBg,
@@ -1099,18 +1124,23 @@ class CustomAlertDialog extends StatelessWidget {
 
 Widget createDialogContent(String text) {
   final RegExp linkRegExp = RegExp(r'(https?://[^\s]+)');
+  bool hasLink = linkRegExp.hasMatch(text);
+
+  // Early return: no link, use default theme color
+  if (!hasLink) {
+    return SelectableText(text, style: const TextStyle(fontSize: 15));
+  }
+
   final List<TextSpan> spans = [];
   int start = 0;
-  bool hasLink = false;
 
   linkRegExp.allMatches(text).forEach((match) {
-    hasLink = true;
     if (match.start > start) {
       spans.add(TextSpan(text: text.substring(start, match.start)));
     }
     spans.add(TextSpan(
       text: match.group(0) ?? '',
-      style: TextStyle(
+      style: const TextStyle(
         color: Colors.blue,
         decoration: TextDecoration.underline,
       ),
@@ -1128,13 +1158,9 @@ Widget createDialogContent(String text) {
     spans.add(TextSpan(text: text.substring(start)));
   }
 
-  if (!hasLink) {
-    return SelectableText(text, style: const TextStyle(fontSize: 15));
-  }
-
   return SelectableText.rich(
     TextSpan(
-      style: TextStyle(color: Colors.black, fontSize: 15),
+      style: const TextStyle(fontSize: 15),
       children: spans,
     ),
   );
@@ -1142,15 +1168,23 @@ Widget createDialogContent(String text) {
 
 void msgBox(SessionID sessionId, String type, String title, String text,
     String link, OverlayDialogManager dialogManager,
-    {bool? hasCancel, ReconnectHandle? reconnect, int? reconnectTimeout}) {
+    {bool? hasCancel,
+    ReconnectHandle? reconnect,
+    int? reconnectTimeout,
+    VoidCallback? onSubmit,
+    int? submitTimeout}) {
   dialogManager.dismissAll();
   List<Widget> buttons = [];
   bool hasOk = false;
   submit() {
     dialogManager.dismissAll();
-    // https://github.com/rustdesk/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
-    if (!type.contains("custom") && desktopType != DesktopType.portForward) {
-      closeConnection();
+    if (onSubmit != null) {
+      onSubmit.call();
+    } else {
+      // https://github.com/rustdesk/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
+      if (!type.contains("custom") && desktopType != DesktopType.portForward) {
+        closeConnection();
+      }
     }
   }
 
@@ -1166,7 +1200,18 @@ void msgBox(SessionID sessionId, String type, String title, String text,
 
   if (type != "connecting" && type != "success" && !type.contains("nook")) {
     hasOk = true;
-    buttons.insert(0, dialogButton('OK', onPressed: submit));
+    late final Widget btn;
+    if (submitTimeout != null) {
+      btn = _CountDownButton(
+        text: 'OK',
+        second: submitTimeout,
+        onPressed: submit,
+        submitOnTimeout: true,
+      );
+    } else {
+      btn = dialogButton('OK', onPressed: submit);
+    }
+    buttons.insert(0, btn);
   }
   hasCancel ??= !type.contains("error") &&
       !type.contains("nocancel") &&
@@ -1187,7 +1232,8 @@ void msgBox(SessionID sessionId, String type, String title, String text,
       reconnectTimeout != null) {
     // `enabled` is used to disable the dialog button once the button is clicked.
     final enabled = true.obs;
-    final button = Obx(() => _ReconnectCountDownButton(
+    final button = Obx(() => _CountDownButton(
+          text: 'Reconnect',
           second: reconnectTimeout,
           onPressed: enabled.isTrue
               ? () {
@@ -1533,7 +1579,7 @@ bool option2bool(String option, String value) {
       option == kOptionForceAlwaysRelay) {
     res = value == "Y";
   } else {
-    assert(false);
+    // "" is true
     res = value != "N";
   }
   return res;
@@ -1541,7 +1587,9 @@ bool option2bool(String option, String value) {
 
 String bool2option(String option, bool b) {
   String res;
-  if (option.startsWith('enable-')) {
+  if (option.startsWith('enable-') &&
+      option != kOptionEnableUdpPunch &&
+      option != kOptionEnableIpv6Punch) {
     res = b ? defaultOptionYes : 'N';
   } else if (option.startsWith('allow-') ||
       option == kOptionStopService ||
@@ -1549,7 +1597,6 @@ String bool2option(String option, bool b) {
       option == kOptionForceAlwaysRelay) {
     res = b ? 'Y' : defaultOptionNo;
   } else {
-    assert(false);
     res = b ? 'Y' : 'N';
   }
   return res;
@@ -1585,7 +1632,8 @@ bool mainGetPeerBoolOptionSync(String id, String key) {
 // Use `sessionGetToggleOption()` and `sessionToggleOption()` instead.
 // Because all session options use `Y` and `<Empty>` as values.
 
-Future<bool> matchPeer(String searchText, Peer peer) async {
+Future<bool> matchPeer(
+    String searchText, Peer peer, PeerTabIndex peerTabIndex) async {
   if (searchText.isEmpty) {
     return true;
   }
@@ -1596,11 +1644,14 @@ Future<bool> matchPeer(String searchText, Peer peer) async {
       peer.username.toLowerCase().contains(searchText)) {
     return true;
   }
-  final alias = peer.alias;
-  if (alias.isEmpty) {
-    return false;
+  if (peer.alias.toLowerCase().contains(searchText)) {
+    return true;
   }
-  return alias.toLowerCase().contains(searchText);
+  if (peerTabShowNote(peerTabIndex) &&
+      peer.note.toLowerCase().contains(searchText)) {
+    return true;
+  }
+  return false;
 }
 
 /// Get the image for the current [platform].
@@ -1629,6 +1680,15 @@ class LastWindowPosition {
 
   LastWindowPosition(this.width, this.height, this.offsetWidth,
       this.offsetHeight, this.isMaximized, this.isFullscreen);
+
+  bool equals(LastWindowPosition other) {
+    return ((width == other.width) &&
+        (height == other.height) &&
+        (offsetWidth == other.offsetWidth) &&
+        (offsetHeight == other.offsetHeight) &&
+        (isMaximized == other.isMaximized) &&
+        (isFullscreen == other.isFullscreen));
+  }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
@@ -1669,24 +1729,36 @@ String get windowFramePrefix =>
         ? "incoming_"
         : (bind.isOutgoingOnly() ? "outgoing_" : ""));
 
+typedef WindowKey = ({WindowType type, int? windowId});
+
+LastWindowPosition? _lastWindowPosition = null;
+final Debouncer _saveWindowDebounce = Debouncer(delay: Duration(seconds: 1));
+
 /// Save window position and size on exit
 /// Note that windowId must be provided if it's subwindow
-Future<void> saveWindowPosition(WindowType type, {int? windowId}) async {
+Future<void> saveWindowPosition(WindowType type,
+    {int? windowId, bool? flush}) async {
   if (type != WindowType.Main && windowId == null) {
     debugPrint(
         "Error: windowId cannot be null when saving positions for sub window");
   }
 
-  late Offset position;
-  late Size sz;
+  Offset? position;
+  Size? sz;
   late bool isMaximized;
   bool isFullscreen = stateGlobal.fullscreen.isTrue;
+
   setPreFrame() {
     final pos = bind.getLocalFlutterOption(k: windowFramePrefix + type.name);
     var lpos = LastWindowPosition.loadFromString(pos);
-    position = Offset(
-        lpos?.offsetWidth ?? position.dx, lpos?.offsetHeight ?? position.dy);
-    sz = Size(lpos?.width ?? sz.width, lpos?.height ?? sz.height);
+    if (lpos != null) {
+      if (lpos.offsetWidth != null && lpos.offsetHeight != null) {
+        position = Offset(lpos.offsetWidth!, lpos.offsetHeight!);
+      }
+      if (lpos.width != null && lpos.height != null) {
+        sz = Size(lpos.width!, lpos.height!);
+      }
+    }
   }
 
   switch (type) {
@@ -1726,29 +1798,56 @@ Future<void> saveWindowPosition(WindowType type, {int? windowId}) async {
       }
       break;
   }
-  if (isWindows) {
+  if (isWindows && position != null) {
     const kMinOffset = -10000;
     const kMaxOffset = 10000;
-    if (position.dx < kMinOffset ||
-        position.dy < kMinOffset ||
-        position.dx > kMaxOffset ||
-        position.dy > kMaxOffset) {
+    if (position!.dx < kMinOffset ||
+        position!.dy < kMinOffset ||
+        position!.dx > kMaxOffset ||
+        position!.dy > kMaxOffset) {
       debugPrint("Invalid position: $position, ignore saving position");
       return;
     }
   }
 
-  final pos = LastWindowPosition(
-      sz.width, sz.height, position.dx, position.dy, isMaximized, isFullscreen);
-  debugPrint(
-      "Saving frame: $windowId: ${pos.width}/${pos.height}, offset:${pos.offsetWidth}/${pos.offsetHeight}, isMaximized:${pos.isMaximized}, isFullscreen:${pos.isFullscreen}");
+  final pos = LastWindowPosition(sz?.width, sz?.height, position?.dx,
+      position?.dy, isMaximized, isFullscreen);
 
-  await bind.setLocalFlutterOption(
-      k: windowFramePrefix + type.name, v: pos.toString());
+  final WindowKey key = (type: type, windowId: windowId);
 
-  if (type == WindowType.RemoteDesktop && windowId != null) {
-    await _saveSessionWindowPosition(
-        type, windowId, isMaximized, isFullscreen, pos);
+  final bool haveNewWindowPosition =
+      (_lastWindowPosition == null) || !pos.equals(_lastWindowPosition!);
+  final bool isPreviousNewWindowPositionPending = _saveWindowDebounce.isRunning;
+
+  if (haveNewWindowPosition || isPreviousNewWindowPositionPending) {
+    _lastWindowPosition = pos;
+
+    if (flush ?? false) {
+      // If a previous update is pending, replace it.
+      _saveWindowDebounce.cancel();
+      await _saveWindowPositionActual(key);
+    } else if (haveNewWindowPosition) {
+      _saveWindowDebounce.call(() => _saveWindowPositionActual(key));
+    }
+  }
+}
+
+Future<void> _saveWindowPositionActual(WindowKey key) async {
+  LastWindowPosition? pos = _lastWindowPosition;
+
+  if (pos != null) {
+    debugPrint(
+        "Saving frame: ${key.windowId}: ${pos.width}/${pos.height}, offset:${pos.offsetWidth}/${pos.offsetHeight}, isMaximized:${pos.isMaximized}, isFullscreen:${pos.isFullscreen}");
+
+    await bind.setLocalFlutterOption(
+        k: windowFramePrefix + key.type.name, v: pos.toString());
+
+    if ((key.type == WindowType.RemoteDesktop ||
+            key.type == WindowType.ViewCamera) &&
+        key.windowId != null) {
+      await _saveSessionWindowPosition(key.type, key.windowId!,
+          pos.isMaximized ?? false, pos.isFullscreen ?? false, pos);
+    }
   }
 }
 
@@ -1814,6 +1913,8 @@ Future<Size> _adjustRestoreMainWindowSize(double? width, double? height) async {
   return Size(restoreWidth, restoreHeight);
 }
 
+// Consider using Rect.contains() instead,
+// though the implementation is not exactly the same.
 bool isPointInRect(Offset point, Rect rect) {
   return point.dx >= rect.left &&
       point.dx <= rect.right &&
@@ -1832,44 +1933,41 @@ Future<Offset?> _adjustRestoreMainWindowOffset(
     return null;
   }
 
-  double? frameLeft;
-  double? frameTop;
-  double? frameRight;
-  double? frameBottom;
-
   if (isDesktop || isWebDesktop) {
-    for (final screen in await window_size.getScreenList()) {
-      frameLeft = frameLeft == null
-          ? screen.visibleFrame.left
-          : min(screen.visibleFrame.left, frameLeft);
-      frameTop = frameTop == null
-          ? screen.visibleFrame.top
-          : min(screen.visibleFrame.top, frameTop);
-      frameRight = frameRight == null
-          ? screen.visibleFrame.right
-          : max(screen.visibleFrame.right, frameRight);
-      frameBottom = frameBottom == null
-          ? screen.visibleFrame.bottom
-          : max(screen.visibleFrame.bottom, frameBottom);
+    final screens = await window_size.getScreenList();
+    if (screens.isNotEmpty) {
+      final windowRect = Rect.fromLTWH(left, top, width, height);
+      bool isVisible = false;
+      for (final screen in screens) {
+        final intersection = windowRect.intersect(screen.visibleFrame);
+        if (intersection.width >= 10.0 && intersection.height >= 10.0) {
+          isVisible = true;
+          break;
+        }
+      }
+      if (!isVisible) {
+        return null;
+      }
+      return Offset(left, top);
     }
   }
-  if (frameLeft == null) {
-    frameLeft = 0.0;
-    frameTop = 0.0;
-    frameRight = ((isDesktop || isWebDesktop)
-            ? kDesktopMaxDisplaySize
-            : kMobileMaxDisplaySize)
-        .toDouble();
-    frameBottom = ((isDesktop || isWebDesktop)
-            ? kDesktopMaxDisplaySize
-            : kMobileMaxDisplaySize)
-        .toDouble();
-  }
+
+  double frameLeft = 0.0;
+  double frameTop = 0.0;
+  double frameRight = ((isDesktop || isWebDesktop)
+          ? kDesktopMaxDisplaySize
+          : kMobileMaxDisplaySize)
+      .toDouble();
+  double frameBottom = ((isDesktop || isWebDesktop)
+          ? kDesktopMaxDisplaySize
+          : kMobileMaxDisplaySize)
+      .toDouble();
+
   final minWidth = 10.0;
-  if ((left + minWidth) > frameRight! ||
-      (top + minWidth) > frameBottom! ||
+  if ((left + minWidth) > frameRight ||
+      (top + minWidth) > frameBottom ||
       (left + width - minWidth) < frameLeft ||
-      top < frameTop!) {
+      top < frameTop) {
     return null;
   } else {
     return Offset(left, top);
@@ -1897,7 +1995,9 @@ Future<bool> restoreWindowPosition(WindowType type,
   String? pos;
   // No need to check mainGetLocalBoolOptionSync(kOptionOpenNewConnInTabs)
   // Though "open in tabs" is true and the new window restore peer position, it's ok.
-  if (type == WindowType.RemoteDesktop && windowId != null && peerId != null) {
+  if ((type == WindowType.RemoteDesktop || type == WindowType.ViewCamera) &&
+      windowId != null &&
+      peerId != null) {
     final peerPos = bind.mainGetPeerFlutterOptionSync(
         id: peerId, k: windowFramePrefix + type.name);
     if (peerPos.isNotEmpty) {
@@ -1909,10 +2009,26 @@ Future<bool> restoreWindowPosition(WindowType type,
 
   var lpos = LastWindowPosition.loadFromString(pos);
   if (lpos == null) {
-    debugPrint("no window position saved, ignoring position restoration");
-    return false;
+    debugPrint("No window position saved, trying to center the window.");
+    switch (type) {
+      case WindowType.Main:
+        // Center the main window only if no position is saved (on first run).
+        if (isWindows || isLinux) {
+          await windowManager.center();
+        }
+        // For MacOS, the window is already centered by default.
+        // See https://github.com/rustdesk/rustdesk/blob/9b9276e7524523d7f667fefcd0694d981443df0e/flutter/macos/Runner/Base.lproj/MainMenu.xib#L333
+        // If `<windowPositionMask>` in `<window>` is not set, the window will be centered.
+        break;
+      default:
+        // No need to change the position of a sub window if no position is saved,
+        // since the default position is already centered.
+        // https://github.com/rustdesk/rustdesk/blob/317639169359936f7f9f85ef445ec9774218772d/flutter/lib/utils/multi_window_manager.dart#L163
+        break;
+    }
+    return true;
   }
-  if (type == WindowType.RemoteDesktop) {
+  if (type == WindowType.RemoteDesktop || type == WindowType.ViewCamera) {
     if (!isRemotePeerPos && windowId != null) {
       if (lpos.offsetWidth != null) {
         lpos.offsetWidth = lpos.offsetWidth! + windowId * kNewWindowOffset;
@@ -2081,8 +2197,14 @@ StreamSubscription? listenUniLinks({handleByFlutter = true}) {
 enum UriLinkType {
   remoteDesktop,
   fileTransfer,
+  viewCamera,
   portForward,
   rdp,
+  terminal,
+}
+
+setEnvTerminalAdmin() {
+  bind.mainSetEnv(key: 'IS_TERMINAL_ADMIN', value: 'Y');
 }
 
 // uri link handler
@@ -2132,6 +2254,11 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
         id = args[i + 1];
         i++;
         break;
+      case '--view-camera':
+        type = UriLinkType.viewCamera;
+        id = args[i + 1];
+        i++;
+        break;
       case '--port-forward':
         type = UriLinkType.portForward;
         id = args[i + 1];
@@ -2139,6 +2266,17 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
         break;
       case '--rdp':
         type = UriLinkType.rdp;
+        id = args[i + 1];
+        i++;
+        break;
+      case '--terminal':
+        type = UriLinkType.terminal;
+        id = args[i + 1];
+        i++;
+        break;
+      case '--terminal-admin':
+        setEnvTerminalAdmin();
+        type = UriLinkType.terminal;
         id = args[i + 1];
         i++;
         break;
@@ -2173,6 +2311,12 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
               password: password, forceRelay: forceRelay);
         });
         break;
+      case UriLinkType.viewCamera:
+        Future.delayed(Duration.zero, () {
+          rustDeskWinManager.newViewCamera(id!,
+              password: password, forceRelay: forceRelay);
+        });
+        break;
       case UriLinkType.portForward:
         Future.delayed(Duration.zero, () {
           rustDeskWinManager.newPortForward(id!, false,
@@ -2182,6 +2326,12 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
       case UriLinkType.rdp:
         Future.delayed(Duration.zero, () {
           rustDeskWinManager.newPortForward(id!, true,
+              password: password, forceRelay: forceRelay);
+        });
+        break;
+      case UriLinkType.terminal:
+        Future.delayed(Duration.zero, () {
+          rustDeskWinManager.newTerminal(id!,
               password: password, forceRelay: forceRelay);
         });
         break;
@@ -2196,7 +2346,16 @@ bool handleUriLink({List<String>? cmdArgs, Uri? uri, String? uriString}) {
 List<String>? urlLinkToCmdArgs(Uri uri) {
   String? command;
   String? id;
-  final options = ["connect", "play", "file-transfer", "port-forward", "rdp"];
+  final options = [
+    "connect",
+    "play",
+    "file-transfer",
+    "view-camera",
+    "port-forward",
+    "rdp",
+    "terminal",
+    "terminal-admin",
+  ];
   if (uri.authority.isEmpty &&
       uri.path.split('').every((char) => char == '/')) {
     return [];
@@ -2224,18 +2383,9 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
       }
     }
   } else if (options.contains(uri.authority)) {
-    final optionIndex = options.indexOf(uri.authority);
     command = '--${uri.authority}';
     if (uri.path.length > 1) {
       id = uri.path.substring(1);
-    }
-    if (isMobile && id != null) {
-      if (optionIndex == 0 || optionIndex == 1) {
-        connect(Get.context!, id);
-      } else if (optionIndex == 2) {
-        connect(Get.context!, id, isFileTransfer: true);
-      }
-      return null;
     }
   } else if (uri.authority.length > 2 &&
       (uri.path.length <= 1 ||
@@ -2260,12 +2410,29 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
     }
   }
 
-  if (isMobile) {
-    if (id != null) {
-      final forceRelay = queryParameters["relay"] != null;
-      connect(Get.context!, id, forceRelay: forceRelay);
-      return null;
+  if (isMobile && id != null) {
+    final forceRelay = queryParameters["relay"] != null;
+    final password = queryParameters["password"];
+
+    // Determine connection type based on command
+    if (command == '--file-transfer') {
+      connect(Get.context!, id,
+          isFileTransfer: true, forceRelay: forceRelay, password: password);
+    } else if (command == '--view-camera') {
+      connect(Get.context!, id,
+          isViewCamera: true, forceRelay: forceRelay, password: password);
+    } else if (command == '--terminal') {
+      connect(Get.context!, id,
+          isTerminal: true, forceRelay: forceRelay, password: password);
+    } else if (command == 'terminal-admin') {
+      setEnvTerminalAdmin();
+      connect(Get.context!, id,
+          isTerminal: true, forceRelay: forceRelay, password: password);
+    } else {
+      // Default to remote desktop for '--connect', '--play', or direct connection
+      connect(Get.context!, id, forceRelay: forceRelay, password: password);
     }
+    return null;
   }
 
   List<String> args = List.empty(growable: true);
@@ -2286,6 +2453,8 @@ List<String>? urlLinkToCmdArgs(Uri uri) {
 
 connectMainDesktop(String id,
     {required bool isFileTransfer,
+    required bool isViewCamera,
+    required bool isTerminal,
     required bool isTcpTunneling,
     required bool isRDP,
     bool? forceRelay,
@@ -2298,8 +2467,20 @@ connectMainDesktop(String id,
         isSharedPassword: isSharedPassword,
         connToken: connToken,
         forceRelay: forceRelay);
+  } else if (isViewCamera) {
+    await rustDeskWinManager.newViewCamera(id,
+        password: password,
+        isSharedPassword: isSharedPassword,
+        connToken: connToken,
+        forceRelay: forceRelay);
   } else if (isTcpTunneling || isRDP) {
     await rustDeskWinManager.newPortForward(id, isRDP,
+        password: password,
+        isSharedPassword: isSharedPassword,
+        connToken: connToken,
+        forceRelay: forceRelay);
+  } else if (isTerminal) {
+    await rustDeskWinManager.newTerminal(id,
         password: password,
         isSharedPassword: isSharedPassword,
         connToken: connToken,
@@ -2314,10 +2495,13 @@ connectMainDesktop(String id,
 
 /// Connect to a peer with [id].
 /// If [isFileTransfer], starts a session only for file transfer.
+/// If [isViewCamera], starts a session only for view camera.
 /// If [isTcpTunneling], starts a session only for tcp tunneling.
 /// If [isRDP], starts a session only for rdp.
 connect(BuildContext context, String id,
     {bool isFileTransfer = false,
+    bool isViewCamera = false,
+    bool isTerminal = false,
     bool isTcpTunneling = false,
     bool isRDP = false,
     bool forceRelay = false,
@@ -2340,7 +2524,7 @@ connect(BuildContext context, String id,
   id = id.replaceAll(' ', '');
   final oldId = id;
   id = await bind.mainHandleRelayId(id: id);
-  final forceRelay2 = id != oldId || forceRelay;
+  forceRelay = id != oldId || forceRelay;
   assert(!(isFileTransfer && isTcpTunneling && isRDP),
       "more than one connect type");
 
@@ -2349,16 +2533,20 @@ connect(BuildContext context, String id,
       await connectMainDesktop(
         id,
         isFileTransfer: isFileTransfer,
+        isViewCamera: isViewCamera,
+        isTerminal: isTerminal,
         isTcpTunneling: isTcpTunneling,
         isRDP: isRDP,
         password: password,
         isSharedPassword: isSharedPassword,
-        forceRelay: forceRelay2,
+        forceRelay: forceRelay,
       );
     } else {
       await rustDeskWinManager.call(WindowType.Main, kWindowConnect, {
         'id': id,
         'isFileTransfer': isFileTransfer,
+        'isViewCamera': isViewCamera,
+        'isTerminal': isTerminal,
         'isTcpTunneling': isTcpTunneling,
         'isRDP': isRDP,
         'password': password,
@@ -2392,10 +2580,52 @@ connect(BuildContext context, String id,
           context,
           MaterialPageRoute(
             builder: (BuildContext context) => FileManagerPage(
-                id: id, password: password, isSharedPassword: isSharedPassword),
+                id: id,
+                password: password,
+                isSharedPassword: isSharedPassword,
+                forceRelay: forceRelay),
           ),
         );
       }
+    } else if (isViewCamera) {
+      if (isWeb) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (BuildContext context) =>
+                desktop_view_camera.ViewCameraPage(
+              key: ValueKey(id),
+              id: id,
+              toolbarState: ToolbarState(),
+              password: password,
+              isSharedPassword: isSharedPassword,
+            ),
+          ),
+        );
+      } else {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (BuildContext context) => ViewCameraPage(
+                id: id,
+                password: password,
+                isSharedPassword: isSharedPassword,
+                forceRelay: forceRelay),
+          ),
+        );
+      }
+    } else if (isTerminal) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (BuildContext context) => TerminalPage(
+            id: id,
+            password: password,
+            isSharedPassword: isSharedPassword,
+            forceRelay: forceRelay,
+          ),
+        ),
+      );
     } else {
       if (isWeb) {
         Navigator.push(
@@ -2406,7 +2636,6 @@ connect(BuildContext context, String id,
               id: id,
               toolbarState: ToolbarState(),
               password: password,
-              forceRelay: forceRelay,
               isSharedPassword: isSharedPassword,
             ),
           ),
@@ -2416,7 +2645,10 @@ connect(BuildContext context, String id,
           context,
           MaterialPageRoute(
             builder: (BuildContext context) => RemotePage(
-                id: id, password: password, isSharedPassword: isSharedPassword),
+                id: id,
+                password: password,
+                isSharedPassword: isSharedPassword,
+                forceRelay: forceRelay),
           ),
         );
       }
@@ -2440,6 +2672,55 @@ Map<String, String> getHttpHeaders() {
 class SimpleWrapper<T> {
   T value;
   SimpleWrapper(this.value);
+}
+
+/// Wakelock manager with reference counting for desktop.
+/// Ensures wakelock is only disabled when all sessions are closed/minimized.
+///
+/// Note: Each isolate has its own WakelockPlus instance with independent assertion.
+/// As long as one isolate has wakelock enabled, the screen stays awake.
+/// This manager handles multiple tabs within the same isolate.
+class WakelockManager {
+  static final Set<UniqueKey> _enabledKeys = {};
+  // Don't use WakelockPlus.enabled, it causes error on Android:
+  // Unhandled Exception: FormatException: Message corrupted
+  //
+  // On Linux, multiple enable() calls create only one inhibit, but each disable()
+  // only releases if _cookie != null. So we need our own _enabled state to avoid
+  // calling disable() when not enabled.
+  // See: https://github.com/fluttercommunity/wakelock_plus/blob/0c74e5bbc6aefac57b6c96bb7ef987705ed559ec/wakelock_plus/lib/src/wakelock_plus_linux_plugin.dart#L48
+  static bool _enabled = false;
+
+  static void enable(UniqueKey key, {bool isServer = false}) {
+    // Check if we should keep awake during outgoing sessions
+    if (!isServer) {
+      final keepAwake =
+          mainGetLocalBoolOptionSync(kOptionKeepAwakeDuringOutgoingSessions);
+      if (!keepAwake) {
+        return; // Don't enable wakelock if user disabled keep awake
+      }
+    }
+    if (isDesktop) {
+      _enabledKeys.add(key);
+    }
+    if (!_enabled) {
+      _enabled = true;
+      WakelockPlus.enable();
+    }
+  }
+
+  static void disable(UniqueKey key) {
+    if (isDesktop) {
+      _enabledKeys.remove(key);
+      if (_enabledKeys.isNotEmpty) {
+        return;
+      }
+    }
+    if (_enabled) {
+      WakelockPlus.disable();
+      _enabled = false;
+    }
+  }
 }
 
 /// call this to reload current window.
@@ -2598,7 +2879,7 @@ class ServerConfig {
     } catch (err) {
       final input = msg.split('').reversed.join('');
       final bytes = base64Decode(base64.normalize(input));
-      json = jsonDecode(utf8.decode(bytes));
+      json = jsonDecode(utf8.decode(bytes, allowMalformed: true));
     }
     idServer = json['host'] ?? '';
     relayServer = json['relay'] ?? '';
@@ -2682,6 +2963,8 @@ String getWindowName({WindowType? overrideType}) {
       return name;
     case WindowType.FileTransfer:
       return "File Transfer - $name";
+    case WindowType.ViewCamera:
+      return "View Camera - $name";
     case WindowType.PortForward:
       return "Port Forward - $name";
     case WindowType.RemoteDesktop:
@@ -2713,7 +2996,7 @@ Future<void> updateSystemWindowTheme() async {
 ///
 /// Note: not found a general solution for rust based AVFoundation bingding.
 /// [AVFoundation] crate has compile error.
-const kMacOSPermChannel = MethodChannel("org.rustdesk.rustdesk/macos");
+const kMacOSPermChannel = MethodChannel("org.rustdesk.rustdesk/host");
 
 enum PermissionAuthorizeType {
   undetermined,
@@ -2780,12 +3063,24 @@ Future<void> start_service(bool is_start) async {
 }
 
 Future<bool> canBeBlocked() async {
-  var access_mode = await bind.mainGetOption(key: kOptionAccessMode);
+  // First check control permission
+  final controlPermission = await bind.mainGetCommon(
+      key: "is-remote-modify-enabled-by-control-permissions");
+  if (controlPermission == "true") {
+    return false;
+  } else if (controlPermission == "false") {
+    return true;
+  }
+
+  // Check local settings
+  var accessMode = await bind.mainGetOption(key: kOptionAccessMode);
+  var isCustomAccessMode = accessMode != 'full' && accessMode != 'view';
   var option = option2bool(kOptionAllowRemoteConfigModification,
       await bind.mainGetOption(key: kOptionAllowRemoteConfigModification));
-  return access_mode == 'view' || (access_mode.isEmpty && !option);
+  return accessMode == 'view' || (isCustomAccessMode && !option);
 }
 
+// to-do: web not implemented
 Future<void> shouldBeBlocked(RxBool block, WhetherUseRemoteBlock? use) async {
   if (use != null && !await use()) {
     block.value = false;
@@ -3047,6 +3342,7 @@ openMonitorInNewTabOrWindow(int i, String peerId, PeerInfo pi,
     'peer_id': peerId,
     'display': i,
     'display_count': pi.displays.length,
+    'window_type': (kWindowType ?? WindowType.RemoteDesktop).index,
   };
   if (screenRect != null) {
     args['screen_rect'] = {
@@ -3061,12 +3357,12 @@ openMonitorInNewTabOrWindow(int i, String peerId, PeerInfo pi,
 }
 
 setNewConnectWindowFrame(int windowId, String peerId, int preSessionCount,
-    int? display, Rect? screenRect) async {
+    WindowType windowType, int? display, Rect? screenRect) async {
   if (screenRect == null) {
     // Do not restore window position to new connection if there's a pre-session.
     // https://github.com/rustdesk/rustdesk/discussions/8825
     if (preSessionCount == 0) {
-      await restoreWindowPosition(WindowType.RemoteDesktop,
+      await restoreWindowPosition(windowType,
           windowId: windowId, display: display, peerId: peerId);
     }
   } else {
@@ -3110,21 +3406,24 @@ parseParamScreenRect(Map<String, dynamic> params) {
 
 get isInputSourceFlutter => stateGlobal.getInputSource() == "Input source 2";
 
-class _ReconnectCountDownButton extends StatefulWidget {
-  _ReconnectCountDownButton({
+class _CountDownButton extends StatefulWidget {
+  _CountDownButton({
     Key? key,
+    required this.text,
     required this.second,
     required this.onPressed,
+    this.submitOnTimeout = false,
   }) : super(key: key);
+  final String text;
   final VoidCallback? onPressed;
   final int second;
+  final bool submitOnTimeout;
 
   @override
-  State<_ReconnectCountDownButton> createState() =>
-      _ReconnectCountDownButtonState();
+  State<_CountDownButton> createState() => _CountDownButtonState();
 }
 
-class _ReconnectCountDownButtonState extends State<_ReconnectCountDownButton> {
+class _CountDownButtonState extends State<_CountDownButton> {
   late int _countdownSeconds = widget.second;
 
   Timer? _timer;
@@ -3145,6 +3444,9 @@ class _ReconnectCountDownButtonState extends State<_ReconnectCountDownButton> {
     _timer = Timer.periodic(Duration(seconds: 1), (timer) {
       if (_countdownSeconds <= 0) {
         timer.cancel();
+        if (widget.submitOnTimeout) {
+          widget.onPressed?.call();
+        }
       } else {
         setState(() {
           _countdownSeconds--;
@@ -3156,7 +3458,7 @@ class _ReconnectCountDownButtonState extends State<_ReconnectCountDownButton> {
   @override
   Widget build(BuildContext context) {
     return dialogButton(
-      '${translate('Reconnect')} (${_countdownSeconds}s)',
+      '${translate(widget.text)} (${_countdownSeconds}s)',
       onPressed: widget.onPressed,
       isOutline: true,
     );
@@ -3346,6 +3648,9 @@ Color? disabledTextColor(BuildContext context, bool enabled) {
 }
 
 Widget loadPowered(BuildContext context) {
+  if (bind.mainGetBuildinOption(key: "hide-powered-by-me") == 'Y') {
+    return SizedBox.shrink();
+  }
   return MouseRegion(
     cursor: SystemMouseCursors.click,
     child: GestureDetector(
@@ -3535,6 +3840,16 @@ setResizable(bool resizable) {
 
 isOptionFixed(String key) => bind.mainIsOptionFixed(key: key);
 
+bool isChangePermanentPasswordDisabled() =>
+    bind.mainGetBuildinOption(key: kOptionDisableChangePermanentPassword) ==
+    'Y';
+
+bool isChangeIdDisabled() =>
+    bind.mainGetBuildinOption(key: kOptionDisableChangeId) == 'Y';
+
+bool isUnlockPinDisabled() =>
+    bind.mainGetBuildinOption(key: kOptionDisableUnlockPin) == 'Y';
+
 bool? _isCustomClient;
 bool get isCustomClient {
   _isCustomClient ??= bind.isCustomClient();
@@ -3700,4 +4015,101 @@ Widget workaroundWindowBorder(BuildContext context, Widget child) {
       ...borders,
     ],
   );
+}
+
+void updateTextAndPreserveSelection(
+    TextEditingController controller, String text) {
+  // Only care about select all for now.
+  final isSelected = controller.selection.isValid &&
+      controller.selection.end > controller.selection.start;
+
+  // Set text will make the selection invalid.
+  controller.text = text;
+
+  if (isSelected) {
+    controller.selection = TextSelection(
+        baseOffset: 0, extentOffset: controller.value.text.length);
+  }
+}
+
+List<String> getPrinterNames() {
+  final printerNamesJson = bind.mainGetPrinterNames();
+  if (printerNamesJson.isEmpty) {
+    return [];
+  }
+  try {
+    final List<dynamic> printerNamesList = jsonDecode(printerNamesJson);
+    final appPrinterName = '$appName Printer';
+    return printerNamesList
+        .map((e) => e.toString())
+        .where((name) => name != appPrinterName)
+        .toList();
+  } catch (e) {
+    debugPrint('failed to parse printer names, err: $e');
+    return [];
+  }
+}
+
+String _appName = '';
+String get appName {
+  if (_appName.isEmpty) {
+    _appName = bind.mainGetAppNameSync();
+  }
+  return _appName;
+}
+
+String getConnectionText(bool secure, bool direct, String streamType) {
+  String connectionText;
+  if (secure && direct) {
+    connectionText = translate("Direct and encrypted connection");
+  } else if (secure && !direct) {
+    connectionText = translate("Relayed and encrypted connection");
+  } else if (!secure && direct) {
+    connectionText = translate("Direct and unencrypted connection");
+  } else {
+    connectionText = translate("Relayed and unencrypted connection");
+  }
+  if (streamType == 'Relay') {
+    streamType = 'TCP';
+  }
+  if (streamType.isEmpty) {
+    return connectionText;
+  } else {
+    return '$connectionText ($streamType)';
+  }
+}
+
+String decode_http_response(http.Response resp) {
+  try {
+    // https://github.com/rustdesk/rustdesk-server-pro/discussions/758
+    return utf8.decode(resp.bodyBytes, allowMalformed: true);
+  } catch (e) {
+    debugPrint('Failed to decode response as UTF-8: $e');
+    // Fallback to bodyString which handles encoding automatically
+    return resp.body;
+  }
+}
+
+bool peerTabShowNote(PeerTabIndex peerTabIndex) {
+  return peerTabIndex == PeerTabIndex.ab || peerTabIndex == PeerTabIndex.group;
+}
+
+// TODO: We should support individual bits combinations in the future.
+// But for now, just keep it simple, because the old code only supports single button.
+// No users have requested multi-button support yet.
+String mouseButtonsToPeer(int buttons) {
+  switch (buttons) {
+    case kPrimaryMouseButton:
+      return 'left';
+    case kSecondaryMouseButton:
+      return 'right';
+    case kMiddleMouseButton:
+      return 'wheel';
+    case kBackMouseButton:
+      return 'back';
+    case kForwardMouseButton:
+      return 'forward';
+    default:
+      return '';
+  }
 }

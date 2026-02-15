@@ -19,7 +19,7 @@ b. 3 seconds timeout => update ratio according to network delay
     When network delay < DELAY_THRESHOLD_150MS, increase ratio, max 150kbps;
     When network delay >= DELAY_THRESHOLD_150MS, decrease ratio;
 
-adjust betwen FPS and ratio:
+adjust between FPS and ratio:
     When network delay < DELAY_THRESHOLD_150MS, fps is always higher than the minimum fps, and ratio is increasing;
     When network delay >= DELAY_THRESHOLD_150MS, fps is always lower than the minimum fps, and ratio is decreasing;
 
@@ -106,7 +106,7 @@ pub struct VideoQoS {
     fps: u32,
     ratio: f32,
     users: HashMap<i32, UserData>,
-    displays: HashMap<usize, DisplayData>,
+    displays: HashMap<String, DisplayData>,
     bitrate_store: u32,
     adjust_ratio_instant: Instant,
     abr_config: bool,
@@ -168,8 +168,8 @@ impl VideoQoS {
         self.users.iter().any(|u| u.1.record)
     }
 
-    pub fn set_support_changing_quality(&mut self, display_idx: usize, support: bool) {
-        if let Some(display) = self.displays.get_mut(&display_idx) {
+    pub fn set_support_changing_quality(&mut self, video_service_name: &str, support: bool) {
+        if let Some(display) = self.displays.get_mut(video_service_name) {
             display.support_changing_quality = support;
         }
     }
@@ -346,16 +346,17 @@ impl VideoQoS {
 
 // Common adjust functions
 impl VideoQoS {
-    pub fn new_display(&mut self, display_idx: usize) {
-        self.displays.insert(display_idx, DisplayData::default());
+    pub fn new_display(&mut self, video_service_name: String) {
+        self.displays
+            .insert(video_service_name, DisplayData::default());
     }
 
-    pub fn remove_display(&mut self, display_idx: usize) {
-        self.displays.remove(&display_idx);
+    pub fn remove_display(&mut self, video_service_name: &str) {
+        self.displays.remove(video_service_name);
     }
 
-    pub fn update_display_data(&mut self, display_idx: usize, send_counter: usize) {
-        if let Some(display) = self.displays.get_mut(&display_idx) {
+    pub fn update_display_data(&mut self, video_service_name: &str, send_counter: usize) {
+        if let Some(display) = self.displays.get_mut(video_service_name) {
             display.send_counter += send_counter;
         }
         self.adjust_fps();
