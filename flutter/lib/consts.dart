@@ -18,7 +18,6 @@ const kKeyMapMode = 'map';
 const kKeyTranslateMode = 'translate';
 
 const String kPlatformAdditionsIsWayland = "is_wayland";
-const String kPlatformAdditionsHeadless = "headless";
 const String kPlatformAdditionsIsInstalled = "is_installed";
 const String kPlatformAdditionsIddImpl = "idd_impl";
 const String kPlatformAdditionsRustDeskVirtualDisplays =
@@ -28,6 +27,10 @@ const String kPlatformAdditionsAmyuniVirtualDisplays =
 const String kPlatformAdditionsHasFileClipboard = "has_file_clipboard";
 const String kPlatformAdditionsSupportedPrivacyModeImpl =
     "supported_privacy_mode_impl";
+
+const String kPrivacyModeImplMag = 'privacy_mode_impl_mag';
+const String kPrivacyModeImplExcludeFromCapture =
+    'privacy_mode_impl_exclude_from_capture';
 
 const String kPeerPlatformWindows = "Windows";
 const String kPeerPlatformLinux = "Linux";
@@ -51,7 +54,6 @@ const String kAppTypeDesktopTerminal = "terminal";
 
 const String kWindowMainWindowOnTop = "main_window_on_top";
 const String kWindowRefreshCurrentUser = "refresh_current_user";
-const String kWindowGetWindowInfo = "get_window_info";
 const String kWindowGetScreenList = "get_screen_list";
 // This method is not used, maybe it can be removed.
 const String kWindowDisableGrabKeyboard = "disable_grab_keyboard";
@@ -91,6 +93,7 @@ const String kOptionForceAlwaysRelay = "force-always-relay";
 const String kOptionViewOnly = "view_only";
 const String kOptionEnableLanDiscovery = "enable-lan-discovery";
 const String kOptionWhitelist = "whitelist";
+const String kOptionIdWhitelist = "id-whitelist";
 const String kOptionEnableAbr = "enable-abr";
 const String kOptionEnableRecordSession = "enable-record-session";
 const String kOptionDirectServer = "direct-server";
@@ -100,6 +103,7 @@ const String kOptionAutoDisconnectTimeout = "auto-disconnect-timeout";
 const String kOptionEnableHwcodec = "enable-hwcodec";
 const String kOptionAllowAutoRecordIncoming = "allow-auto-record-incoming";
 const String kOptionAllowAutoRecordOutgoing = "allow-auto-record-outgoing";
+const String kOptionHideRecordingButton = "hide-recording-button";
 const String kOptionVideoSaveDirectory = "video-save-directory";
 const String kOptionAccessMode = "access-mode";
 const String kOptionEnableKeyboard = "enable-keyboard";
@@ -114,6 +118,9 @@ const String kOptionTerminalPersistent = "terminal-persistent";
 const String kOptionEnableTunnel = "enable-tunnel";
 const String kOptionEnableRemoteRestart = "enable-remote-restart";
 const String kOptionEnableBlockInput = "enable-block-input";
+const String kOptionEnablePrivacyMode = "enable-privacy-mode";
+const String kOptionEnablePermChangeInAcceptWindow =
+    "enable-perm-change-in-accept-window";
 const String kOptionAllowRemoteConfigModification =
     "allow-remote-config-modification";
 const String kOptionVerificationMethod = "verification-method";
@@ -139,6 +146,10 @@ const String kOptionSwapLeftRightMouse = "swap-left-right-mouse";
 const String kOptionCodecPreference = "codec-preference";
 const String kOptionRemoteMenubarDragLeft = "remote-menubar-drag-left";
 const String kOptionRemoteMenubarDragRight = "remote-menubar-drag-right";
+const String kOptionRemoteMenubarEdge = "remote-menubar-edge";
+const String kOptionRemoteMenubarFraction = "remote-menubar-frac";
+const String kOptionAllowMultiEdgeToolbarDock =
+    "allow-multi-edge-toolbar-dock";
 const String kOptionHideAbTagsPanel = "hideAbTagsPanel";
 const String kOptionRemoteMenubarState = "remoteMenubarState";
 const String kOptionPeerSorting = "peer-sorting";
@@ -151,7 +162,6 @@ const String kOptionEnableConfirmClosingTabs = "enable-confirm-closing-tabs";
 const String kOptionAllowAlwaysSoftwareRender = "allow-always-software-render";
 const String kOptionEnableCheckUpdate = "enable-check-update";
 const String kOptionAllowAutoUpdate = "allow-auto-update";
-const String kOptionAllowLinuxHeadless = "allow-linux-headless";
 const String kOptionAllowRemoveWallpaper = "allow-remove-wallpaper";
 const String kOptionStopService = "stop-service";
 const String kOptionDirectxCapture = "enable-directx-capture";
@@ -163,7 +173,10 @@ const String kOptionShowVirtualMouse = "show-virtual-mouse";
 const String kOptionVirtualMouseScale = "virtual-mouse-scale";
 const String kOptionShowVirtualJoystick = "show-virtual-joystick";
 const String kOptionAllowAskForNoteAtEndOfConnection = "allow-ask-for-note";
+const String kOptionAllowMonitorSwitchMainToolbar = "allow-monitor-switch-main-toolbar";
+const String kOptionAllowMonitorSwitchMinToolbar = "allow-monitor-switch-min-toolbar";
 const String kOptionEnableShowTerminalExtraKeys = "enable-show-terminal-extra-keys";
+const String kOptionShowTerminalCtrlKeys = "show-terminal-extra-ctrl-keys";
 
 // network options
 const String kOptionAllowWebSocket = "allow-websocket";
@@ -175,7 +188,9 @@ const String kOptionEnableFlutterHttpOnRust = "enable-flutter-http-on-rust";
 const String kOptionHideServerSetting = "hide-server-settings";
 const String kOptionHideProxySetting = "hide-proxy-settings";
 const String kOptionHideWebSocketSetting = "hide-websocket-settings";
+const String kOptionHideStopService = "hide-stop-service";
 const String kOptionHideRemotePrinterSetting = "hide-remote-printer-settings";
+const String kOptionHideGeneralSetting = "hide-general-settings";
 const String kOptionHideSecuritySetting = "hide-security-settings";
 const String kOptionHideNetworkSetting = "hide-network-settings";
 const String kOptionRemovePresetPasswordWarning =
@@ -186,6 +201,9 @@ const String kOptionDisableChangeId = "disable-change-id";
 const String kOptionDisableUnlockPin = "disable-unlock-pin";
 const kHideUsernameOnCard = "hide-username-on-card";
 const String kOptionHideHelpCards = "hide-help-cards";
+const String kOptionAllowDeepLinkPassword = "allow-deep-link-password";
+const String kOptionAllowDeepLinkServerSettings =
+    "allow-deep-link-server-settings";
 
 const String kOptionToggleViewOnly = "view-only";
 const String kOptionToggleShowMyCursor = "show-my-cursor";
@@ -305,10 +323,11 @@ double kNewWindowOffset = isWindows
             ? 30.0
             : 50.0;
 
+const kDragToResizeAreaPaddingSize = 5.0;
 EdgeInsets get kDragToResizeAreaPadding => !kUseCompatibleUiMode && isLinux
     ? stateGlobal.fullscreen.isTrue || stateGlobal.isMaximized.value
         ? EdgeInsets.zero
-        : EdgeInsets.all(5.0)
+        : EdgeInsets.all(kDragToResizeAreaPaddingSize)
     : EdgeInsets.zero;
 // https://en.wikipedia.org/wiki/Non-breaking_space
 const int $nbsp = 0x00A0;

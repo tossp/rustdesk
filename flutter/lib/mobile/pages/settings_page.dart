@@ -17,6 +17,7 @@ import '../../common/widgets/login.dart';
 import '../../consts.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
+import '../widgets/deploy_dialog.dart';
 import '../widgets/dialog.dart';
 import 'home_page.dart';
 import 'scan_page.dart';
@@ -77,6 +78,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _enableAbr = false;
   var _denyLANDiscovery = false;
   var _onlyWhiteList = false;
+  var _onlyIdWhiteList = false;
   var _enableDirectIPAccess = false;
   var _enableRecordSession = false;
   var _enableHardwareCodec = false;
@@ -88,6 +90,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
   var _directAccessPort = "";
   var _fingerprint = "";
   var _buildDate = "";
+  var _myId = "";
   var _autoDisconnectTimeout = "";
   var _hideServer = false;
   var _hideProxy = false;
@@ -108,6 +111,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     _denyLANDiscovery = !option2bool(kOptionEnableLanDiscovery,
         bind.mainGetOptionSync(key: kOptionEnableLanDiscovery));
     _onlyWhiteList = whitelistNotEmpty();
+    _onlyIdWhiteList = idWhitelistNotEmpty();
     _enableDirectIPAccess = option2bool(
         kOptionDirectServer, bind.mainGetOptionSync(key: kOptionDirectServer));
     _enableRecordSession = option2bool(kOptionEnableRecordSession,
@@ -214,6 +218,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
       if (_buildDate != buildDate) {
         update = true;
         _buildDate = buildDate;
+      }
+
+      final myId = await bind.mainGetMyId();
+      if (_myId != myId) {
+        update = true;
+        _myId = myId;
       }
 
       final isUsingPublicServer = await bind.mainIsUsingPublicServer();
@@ -397,6 +407,29 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
           }
 
           changeWhiteList(callback: update);
+        },
+      ),
+      SettingsTile.switchTile(
+        title: Row(children: [
+          Expanded(child: Text(translate('Use ID whitelisting'))),
+          Offstage(
+                  offstage: !_onlyIdWhiteList,
+                  child: const Icon(Icons.warning_amber_rounded,
+                      color: Color.fromARGB(255, 255, 204, 0)))
+              .marginOnly(left: 5)
+        ]),
+        initialValue: _onlyIdWhiteList,
+        onToggle: (_) async {
+          update() async {
+            final onlyIdWhiteList = idWhitelistNotEmpty();
+            if (onlyIdWhiteList != _onlyIdWhiteList) {
+              setState(() {
+                _onlyIdWhiteList = onlyIdWhiteList;
+              });
+            }
+          }
+
+          changeIdWhiteList(callback: update);
         },
       ),
       SettingsTile.switchTile(
@@ -617,7 +650,7 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
         onToggle: (bool v) async {
           await mainSetLocalBoolOption(kOptionEnableShowTerminalExtraKeys, v);
           final newValue =
-            mainGetLocalBoolOptionSync(kOptionEnableShowTerminalExtraKeys);
+              mainGetLocalBoolOptionSync(kOptionEnableShowTerminalExtraKeys);
           setState(() {
             _showTerminalExtraKeys = newValue;
           });
@@ -688,8 +721,18 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
               SettingsTile(
                 title: Obx(() => Text(gFFI.userModel.userName.value.isEmpty
                     ? translate('Login')
-                    : '${translate('Logout')} (${gFFI.userModel.userName.value})')),
-                leading: Icon(Icons.person),
+                    : '${translate('Logout')} (${gFFI.userModel.accountLabelWithHandle})')),
+                leading: Obx(() {
+                  final avatar = bind.mainResolveAvatarUrl(
+                      avatar: gFFI.userModel.avatar.value);
+                  return buildAvatarWidget(
+                        avatar: avatar,
+                        size: 28,
+                        borderRadius: null,
+                        fallback: Icon(Icons.person),
+                      ) ??
+                      Icon(Icons.person);
+                }),
                 onPressed: (context) {
                   if (gFFI.userModel.userName.value.isEmpty) {
                     loginDialog();
@@ -717,6 +760,13 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                 leading: Icon(Icons.network_ping),
                 onPressed: (context) {
                   changeSocks5Proxy();
+                }),
+          if (isAndroid && !bind.isOutgoingOnly())
+            SettingsTile(
+                title: Text(translate('Deploy')),
+                leading: Icon(Icons.cloud_upload),
+                onPressed: (context) {
+                  showDeployDialog();
                 }),
           if (!disabledSettings && !_hideNetwork && !_hideWebSocket)
             SettingsTile.switchTile(
@@ -829,10 +879,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
             ),
           if (!incomingOnly)
             SettingsTile.switchTile(
-              title: Text(translate('keep-awake-during-outgoing-sessions-label')),
+              title:
+                  Text(translate('keep-awake-during-outgoing-sessions-label')),
               initialValue: _preventSleepWhileConnected,
               onToggle: (v) async {
-                await mainSetLocalBoolOption(kOptionKeepAwakeDuringOutgoingSessions, v);
+                await mainSetLocalBoolOption(
+                    kOptionKeepAwakeDuringOutgoingSessions, v);
                 setState(() {
                   _preventSleepWhileConnected = v;
                 });
@@ -962,6 +1014,14 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
                     child: Text(_fingerprint),
                   ),
                   leading: Icon(Icons.fingerprint)),
+            SettingsTile(
+                onPressed: (context) => onCopyId(_myId),
+                title: Text(translate("ID")),
+                value: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Text(_myId),
+                ),
+                leading: Icon(Icons.perm_identity)),
             SettingsTile(
               title: Text(translate("Privacy Statement")),
               onPressed: (context) =>
