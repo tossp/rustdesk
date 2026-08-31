@@ -69,7 +69,7 @@ jobs:
           RENDEZVOUS_SERVER: rd.example.com
           # Public 32-byte all-zero test key; never a production key.
           RS_PUB_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-        run: python3 build.py --tossp-client
+        run: python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec --vram --tossp-client
 
   production:
     if: github.event_name == 'workflow_dispatch'
@@ -120,7 +120,7 @@ jobs:
             echo "::error::RS_PUB_KEY secret is required"
             exit 1
           fi
-          python3 build.py --tossp-client
+          python3 ./build.py --portable --flutter --skip-portable-pack --hwcodec --vram --tossp-client
 
       - name: Upload Windows x64 artifact
         uses: actions/upload-artifact@v7
