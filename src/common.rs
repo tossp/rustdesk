@@ -954,6 +954,11 @@ pub fn check_software_update() {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    #[cfg(feature = "tossp-client")]
+    if is_custom_client() {
+        return Ok(());
+    }
+
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();
@@ -2342,7 +2347,14 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    get_app_name() != "RustDesk"
+    #[cfg(feature = "tossp-client")]
+    {
+        true
+    }
+    #[cfg(not(feature = "tossp-client"))]
+    {
+        get_app_name() != "RustDesk"
+    }
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {

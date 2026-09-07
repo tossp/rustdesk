@@ -125,6 +125,11 @@ def make_parser():
             '' if windows or osx else ', need libva-dev.')
     )
     parser.add_argument(
+        '--tossp-client',
+        action='store_true',
+        help='Enable TossPig client defaults (requires build-time configuration).'
+    )
+    parser.add_argument(
         '--vram',
         action='store_true',
         help='Enable feature vram, only available on windows now.'
@@ -316,6 +321,8 @@ def get_features(args):
     features = ['inline'] if not args.flutter else []
     if args.hwcodec:
         features.append('hwcodec')
+    if args.tossp_client:
+        features.append('tossp-client')
     if args.vram:
         features.append('vram')
     if args.flutter:

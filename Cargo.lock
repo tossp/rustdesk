@@ -3793,6 +3793,7 @@ dependencies = [
  "url",
  "users",
  "uuid",
+ "wayland-protocols",
  "webpki-roots 1.0.9",
  "webrtc",
  "whoami",
