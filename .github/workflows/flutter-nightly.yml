@@ -5,11 +5,17 @@ on:
     # schedule build every night
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      custom-rendezvous:
+        description: Use the custom rendezvous defaults (requires RS_PUB_KEY)
+        type: boolean
+        default: false
 
 jobs:
   run-flutter-nightly-build:
     uses: ./.github/workflows/flutter-build.yml
     secrets: inherit
     with:
+      custom-rendezvous: ${{ github.event_name == 'workflow_dispatch' && inputs.custom-rendezvous }}
       upload-artifact: true
       upload-tag: "nightly"
